@@ -697,7 +697,7 @@ private void CheckAndReset(ref Vector3 vector)
      private Vector3 PrecomputeTrajectory(Vector3 velocity)
     {
         var stop = false;
-        var deltaTime = 1f/100f;
+        var deltaTime = 1f/60f;
 
         v_n = velocity;
         p_n = transform.position;
