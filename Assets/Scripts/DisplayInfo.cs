@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
+using Unity.VisualScripting;
 
 [InitializeOnLoad]
 public class DisplayInfo
@@ -40,7 +41,14 @@ public class DisplayInfo
         Rect dragForceRect = new Rect(10, 190, 200, 30);
         Rect magnusForceRect = new Rect(10, 210, 200, 30);
         Rect normalForceRect = new Rect(10, 230, 200, 30);
-        Rect totalForceRect = new Rect(10, 250, 200, 30);
+        Rect frictionForceRect = new Rect(10, 250, 200, 30);
+        Rect totalForceRect = new Rect(10, 270, 200, 30);
+        
+        Rect frictionTorque = new Rect(10, 300, 200, 30);
+        Rect dragTorque = new Rect(10, 320, 200, 30);
+        Rect totalTorques = new Rect(10, 340, 200, 30);
+        
+        Rect timeToCompute = new Rect(10, 370, 200, 30);
 
         GUI.Label(positionRect, "Position: " + ball.Position(), textStyle);
         GUI.Label(velocityRect, "Velocity: " + ball.Velocity(), textStyle);
@@ -57,7 +65,16 @@ public class DisplayInfo
         GUI.Label(dragForceRect, "Drag force: " + ball.DragForce(), textStyle);
         GUI.Label(magnusForceRect, "Magnus force: " + ball.MagnusForce(), textStyle);
         GUI.Label(normalForceRect, "Normal force: " + ball.NormalForce(), textStyle);
+        GUI.Label(frictionForceRect, "Friction force: " + ball.FrictionForce(), textStyle);
         GUI.Label(totalForceRect, "Total forces: " + ball.TotalForces(), textStyle);
+        
+        textStyle.normal.textColor = Color.blue;
+        GUI.Label(frictionTorque, "Friction torque: " + ball.FrictionTorque(), textStyle);
+        GUI.Label(dragTorque, "Drag torque: " + ball.DragTorque(), textStyle);
+        GUI.Label(totalTorques, "Total torques: " + ball.TotalTorque(), textStyle);
+        
+        textStyle.normal.textColor = Color.black;
+        GUI.Label(timeToCompute, "Time to compute: " +  ball.TimeToCompute(), textStyle);
         
         Handles.EndGUI();
     }
@@ -84,16 +101,8 @@ public static class SphereProjectionEditor
 
             if (ball == null || groundTransform == null) return;
         }
-
-        Vector3 planeNormal = groundTransform.up; 
-        Vector3 planePoint = groundTransform.position; 
-        Vector3 sphereCenter = ball.Position();
-        float sphereRadius = ball.Radius(); 
-
-        Vector3 projectionCenter = sphereCenter - planeNormal * Vector3.Dot(sphereCenter - planePoint, planeNormal);
-
+        
         Handles.color = Color.magenta;
-        Handles.DrawSolidDisc(projectionCenter, planeNormal, sphereRadius);
     }
     
 }
@@ -144,7 +153,7 @@ public static class TrajectoryEditor
         Handles.color = Color.green; // Set trajectory color
         List<Vector3> trajectoryPoints = CalculateTrajectory(ball.Position(), ball.Velocity(), Physics.gravity);
 
-        Handles.DrawAAPolyLine(3, trajectoryPoints.ToArray());
+        //Handles.DrawAAPolyLine(3, trajectoryPoints.ToArray());
     }
 
     private static List<Vector3> CalculateTrajectory(Vector3 startPos, Vector3 startVel, Vector3 gravity)
