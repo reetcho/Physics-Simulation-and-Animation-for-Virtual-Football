@@ -49,6 +49,7 @@ public class DisplayInfo
         Rect totalTorques = new Rect(10, 340, 200, 30);
         
         Rect timeToCompute = new Rect(10, 370, 200, 30);
+        Rect averageTimeToCompute = new Rect(10, 390, 200, 30);
 
         GUI.Label(positionRect, "Position: " + ball.Position(), textStyle);
         GUI.Label(velocityRect, "Velocity: " + ball.Velocity(), textStyle);
@@ -75,6 +76,7 @@ public class DisplayInfo
         
         textStyle.normal.textColor = Color.black;
         GUI.Label(timeToCompute, "Time to compute: " +  ball.TimeToCompute(), textStyle);
+        GUI.Label(averageTimeToCompute, "Average time to compute: " + ball.AverageTimeToCompute(), textStyle);
         
         Handles.EndGUI();
     }
