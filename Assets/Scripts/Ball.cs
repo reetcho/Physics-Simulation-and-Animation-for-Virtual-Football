@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEngine;
 using Quaternion = UnityEngine.Quaternion;
@@ -17,15 +18,23 @@ public class Ball : MonoBehaviour
     private Vector3 a_n; //acceleration_n
     private Vector3 w_n; //angularVelocity_n
     private Vector3 w_n1;//angularVelocity_n+1
-    private Vector3 alpha_n; //angularAcceleration_n
+    private Vector3 alpha_n;
+    private Vector3 alpha_n1;
+    private Quaternion theta_n; //angularAcceleration_n
+    private Quaternion theta_n1; //angularAcceleration_n1
+    
     
     private bool _isBouncing;
     private bool _isSliding;
     private bool _stoppedSliding;
     private bool _collisionAtFrameBefore;
     
+    [Header("Ball properties")]
     [SerializeField] private float radius;
     [SerializeField] private float mass;
+    [SerializeField] [Range(0, 1)] private float coefficientOfVerticalRestitution;
+    [SerializeField] [Range(-1, 1)] private float coefficientOfHorizontalRestitution;
+    [SerializeField] [Range(-1, 1)] private float coefficientRotationRestitutionYaxis;
     private float _inertialMomentum; //assumption of thin sphere -> 2/3 * mass * radius^2
 
     private float _potentialEnergy;
@@ -47,42 +56,52 @@ public class Ball : MonoBehaviour
     private const float Gravity = 9.81f; 
     private const float CollisionDetectionError = 1e-5f;
 
-    [SerializeField] [Range(0, 1)] private float coefficientOfVerticalRestitution;
-    [SerializeField] [Range(-1, 1)] private float coefficientOfHorizontalRestitution;
-    [SerializeField] [Range(-1, 1)] private float coefficientRotationRestitutionYaxis;
+    [Header("Friction")]
     [SerializeField] [Range(0, 1)] private float coefficientOfSlidingFriction;
     [SerializeField] [Range(0, 1)] private float coefficientOfRollingFriction; 
+    
+    [Header("Drag and lift force")]
     [SerializeField] private float airDensity;
+    [SerializeField] private float kinematicViscosityOfAir = 1.48f * 1e-5f;
     [SerializeField] private float dragCoefficient;
     [SerializeField] private bool customDragCoefficient;
     [SerializeField] private float vc;
     [SerializeField] private float vs;
-    [SerializeField] private float kinematicViscosityOfAir = 1.48f * 1e-5f;
     [SerializeField] private float angularDragCoefficient;
     [SerializeField] private float liftCoefficient;
 
-    private Vector3 _p0;
+    
+    [Header("Initial values")]
     [SerializeField] private Vector3 v0;
     [SerializeField] private Vector3 w0;
-
-    public bool frameByFrame;
-    [Range(0,500)] public int frameCount;
-    private List<Frame> _frames;
-    private float _timeToCompute;
-    private float _totalTimeToCompute = 0f;
-    private int _frameCounter = 0;
-
-    public bool precompute;
     [SerializeField] private float initialSpeed;
-
-    [SerializeField] private GameObject comparisonSphere;
-    [SerializeField] private GameObject target;
     
+    [Header("Simulation")]
     [SerializeField] private bool velocityVerlet;
     [SerializeField] private bool explicitEuler;
     [SerializeField] private bool RK2;
     [SerializeField] private bool RK4;
     [SerializeField] private float frameRate;
+
+    [Header("Tracker")]
+    public bool frameByFrame;
+    [Range(0,500)] public int frameCount;
+    private List<Frame> _frames;
+    private float _timeToCompute;
+    private float _totalTimeToCompute = 0f;
+
+    [Header("Targeted shot")]
+    public bool precompute;
+    [SerializeField] private int precomputationFrameRate;
+    [SerializeField] private float precalculationMaxError;
+    [SerializeField] private int maxIterations;
+
+    [Header("Other")]
+    [SerializeField] private GameObject comparisonSphere;
+    [SerializeField] private GameObject target;
+    [SerializeField] private GameObject placeholder;
+    
+    
     
     void Awake()
     {
@@ -90,13 +109,12 @@ public class Ball : MonoBehaviour
         Time.fixedDeltaTime = 1/frameRate;
         _frames = new List<Frame>();
         
-        _p0 = transform.position;
         p_n = transform.position;
         v_n = v0;
         a_n = Vector3.zero;
         w_n1 = w0;
         w_n = w_n1;
-        alpha_n = Vector3.zero;
+        theta_n = Quaternion.identity;
         
         transform.localScale = new Vector3(radius, radius, radius)*2;
 
@@ -117,7 +135,7 @@ public class Ball : MonoBehaviour
             a_n = Vector3.zero;
             w_n1 = w0;
             w_n = w_n1;
-            alpha_n = Vector3.zero;
+            theta_n = Quaternion.identity;
 
             _isBouncing = !(p_n.y <= radius);
 
@@ -154,8 +172,6 @@ public class Ball : MonoBehaviour
 
     private void ComputeFrame(float deltaTime)
     {
-        _frameCounter++;
-        
         var startTime = Time.realtimeSinceStartup;
         
         CheckPureRolling();
@@ -170,10 +186,12 @@ public class Ball : MonoBehaviour
         v_n = v_n1;
         w_n = w_n1;
         p_n = p_n1;
+        theta_n = theta_n1;
         
         CalculateTotalEnergy();
 
         transform.position = p_n;
+        transform.rotation = theta_n;
         
         var endTime = Time.realtimeSinceStartup;
         _timeToCompute = endTime - startTime;
@@ -228,7 +246,7 @@ public class Ball : MonoBehaviour
 
          //p_k+1
          p_n1 = p_n + deltaTime * v_n1;
-         transform.Rotate(Mathf.Rad2Deg * deltaTime * w_n1, Space.World);
+         theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * w_n1) * theta_n;
 
          //F_k+1
          CalculateTotalForces(v_n1, w_n1);
@@ -275,56 +293,104 @@ public class Ball : MonoBehaviour
         
         //p_k+1
         p_n1 = p_n + deltaTime * v_n1;
-        transform.Rotate(Mathf.Rad2Deg * deltaTime * w_n1, Space.World);
+        theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * w_n1) * theta_n;
     }
     
     private void Runge_Kutta_2(float deltaTime)
+    {
+        //k1
+        CalculateTotalForces(v_n, w_n);
+        a_n = _totalForces / mass;
+        var k1V = deltaTime * a_n;
+        var k1P = deltaTime * v_n;
+
+        CalculateTotalTorque(v_n, w_n);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k1W = deltaTime * alpha_n;
+        var k1T = deltaTime * w_n;
+        
+        //k2
+        CalculateTotalForces(v_n + k1V, w_n + k1W);
+        a_n = _totalForces / mass;
+        var k2V = deltaTime * a_n;
+        var k2P = deltaTime * (v_n + k1V);
+        
+        CalculateTotalTorque(v_n + k1V, w_n + k1W);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k2W = deltaTime * alpha_n;
+        var k2T = deltaTime * (w_n + k1W);
+        
+        p_n1 = p_n + (k1P + k2P) / 2;
+        v_n1 = v_n + (k1V + k2V) / 2;
+        
+        w_n1 = w_n + (k1W + k2W) / 2;
+        theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * (k1T + k2T) / 2) * theta_n;
+        
+        if(!_isSliding && !_isBouncing)
         {
-            //k1
-            CalculateTotalForces(v_n, w_n);
-            a_n = _totalForces / mass;
-            var k1V = deltaTime * a_n;
-            var k1P = deltaTime * v_n;
-            
-            //k2
-            CalculateTotalForces(v_n + k1V, w_n);
-            a_n = _totalForces / mass;
-            var k2V = deltaTime * a_n;
-            var k2P = deltaTime * (v_n + k1V);
-            
-            p_n1 = p_n + (k1P + k2P) / 2;
-            v_n1 = v_n + (k1V + k2V) / 2;
+            w_n1 = -Vector3.Cross(v_n1, Vector3.up) / radius;
+            theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * w_n1) * theta_n;
         }
-    
-        private void Runge_Kutta_4(float deltaTime)
+    }
+
+    private void Runge_Kutta_4(float deltaTime)
+    {
+        //k1
+        CalculateTotalForces(v_n, w_n);
+        a_n = _totalForces / mass;
+        var k1V = deltaTime * a_n;
+        var k1P = deltaTime * v_n;
+        
+        CalculateTotalTorque(v_n, w_n);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k1W = deltaTime * alpha_n;
+        var k1T = deltaTime * w_n;
+        
+        //k2
+        CalculateTotalForces(v_n + k1V/2, w_n + k1W/2);
+        a_n = _totalForces / mass;
+        var k2V = deltaTime * a_n;
+        var k2P = deltaTime * (v_n + k1V/2);
+        
+        CalculateTotalTorque(v_n + k1V/2, w_n + k1W/2);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k2W = deltaTime * alpha_n;
+        var k2T = deltaTime * (w_n + k1W/2);
+        
+        //k3
+        CalculateTotalForces(v_n + k2V/2, w_n + k2W/2);
+        a_n = _totalForces / mass;
+        var k3V = deltaTime * a_n;
+        var k3P = deltaTime * (v_n + k2V/2);
+        
+        CalculateTotalTorque(v_n + k2V/2, w_n + k2W/2);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k3W = deltaTime * alpha_n;
+        var k3T = deltaTime * (w_n + k2W/2);
+        
+        //k4
+        CalculateTotalForces(v_n + k3V, w_n + k3W);
+        a_n = _totalForces / mass;
+        var k4V = deltaTime * a_n;
+        var k4P = deltaTime * (v_n + k3V);
+        
+        CalculateTotalTorque(v_n + k3V, w_n + k3W);
+        alpha_n = _frictionForce / _inertialMomentum;
+        var k4W = deltaTime * alpha_n;
+        var k4T = deltaTime * (w_n + k3W);
+        
+        p_n1 = p_n + (k1P + 2*k2P + 2*k3P + k4P) / 6;
+        v_n1 = v_n + (k1V + 2*k2V + 2*k3V + k4V) / 6;
+        
+        w_n1 = w_n + (k1W + 2*k2W + 2*k3W + k4W) / 6;
+        theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * (k1T + 2*k2T + 2*k3T + k4T) / 6) * theta_n;
+        
+        if(!_isSliding && !_isBouncing)
         {
-            //k1
-            CalculateTotalForces(v_n, w_n);
-            a_n = _totalForces / mass;
-            var k1V = deltaTime * a_n;
-            var k1P = deltaTime * v_n;
-            
-            //k2
-            CalculateTotalForces(v_n + k1V/2, w_n);
-            a_n = _totalForces / mass;
-            var k2V = deltaTime * a_n;
-            var k2P = deltaTime * (v_n + k1V/2);
-            
-            //k3
-            CalculateTotalForces(v_n + k2V/2, w_n);
-            a_n = _totalForces / mass;
-            var k3V = deltaTime * a_n;
-            var k3P = deltaTime * (v_n + k2V/2);
-            
-            //k4
-            CalculateTotalForces(v_n + k3V, w_n);
-            a_n = _totalForces / mass;
-            var k4V = deltaTime * a_n;
-            var k4P = deltaTime * (v_n + k3V);
-            
-            p_n1 = p_n + (k1P + 2*k2P + 2*k3P + k4P) / 6;
-            v_n1 = v_n + (k1V + 2*k2V + 2*k3V + k4V) / 6;
+            w_n1 = -Vector3.Cross(v_n1, Vector3.up) / radius;
+            theta_n1 = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * w_n1) * theta_n;;
         }
+    }
     
     private void CheckCollision(float deltaTime)
     {
@@ -353,7 +419,7 @@ public class Ball : MonoBehaviour
     private void CheckPureRolling()
     {
         if(!_isBouncing && !_stoppedSliding){
-            if ((v_n - Vector3.Cross(w_n * radius, Vector3.up)).magnitude <= 1e-3)
+            if ((v_n - Vector3.Cross(w_n * radius, Vector3.up)).magnitude <= 1e-2)
             {
                 _isSliding = false;
                 _stoppedSliding = true;
@@ -368,7 +434,7 @@ public class Ball : MonoBehaviour
     
 private void CheckAndReset(ref Vector3 vector)
 {
-    var threshold = 1e-3;
+    var threshold = 1e-2;
     if (vector.sqrMagnitude < threshold * threshold)
     {
         vector = Vector3.zero;
@@ -536,7 +602,7 @@ private void CheckAndReset(ref Vector3 vector)
         }
         
         //rolling friction, pure rolling
-        if(velocity.magnitude > 1e-3)
+        if(velocity.magnitude > 1e-2)
             _frictionForce = - coefficientOfRollingFriction * mass * Gravity * velocity.normalized;
         else
             _frictionForce = Vector3.zero;
@@ -560,22 +626,28 @@ private void CheckAndReset(ref Vector3 vector)
             return Vector3.zero;
         
         var direction = (angularVelocity + Vector3.Cross(velocity, Vector3.up)/radius).normalized;
-        alpha_n = -3f/2f * coefficientOfSlidingFriction * Gravity / radius * direction;
+        var alpha = -3f/2f * coefficientOfSlidingFriction * Gravity / radius * direction;
 
-        return alpha_n * _inertialMomentum;
+        return alpha * _inertialMomentum;
     }
     
-    private Vector3 CalculateDragTorque(Vector3 angularVelocity)
+    private Vector3 CalculateDragTorque(Vector3 velocity, Vector3 angularVelocity)
     {
         if(angularDragCoefficient == 0f || angularVelocity.magnitude < 1e-2)
             return Vector3.zero;
 
+        var vTPlus = velocity.magnitude + radius * Vector3.Dot(angularVelocity, velocity.normalized);
+        var vTMinus = velocity.magnitude - radius * Vector3.Dot(angularVelocity, velocity.normalized);
+        
+        var angularDragCoefficientPlus = 0.0074f * Mathf.Pow(vTPlus * airDensity * radius*2, -1f/5f);
+        var angularDragCoefficientMinus = 0.0074f * Mathf.Pow(vTMinus * airDensity * radius*2, -1f/5f);
+            
         return -0.5f * angularDragCoefficient * airDensity * Mathf.Pow(radius, 5) * angularVelocity.magnitude * angularVelocity;
     }
 
     private void CalculateTotalTorque(Vector3 velocity, Vector3 angularVelocity)
     {
-        _dragTorque = CalculateDragTorque(angularVelocity);
+        _dragTorque = CalculateDragTorque(velocity, angularVelocity);
         _frictionTorque = CalculateFrictionTorque(velocity, angularVelocity);
         
         _totalTorque = _dragTorque + _frictionTorque;
@@ -673,7 +745,6 @@ private void CheckAndReset(ref Vector3 vector)
     private void ContinuousCollisionDetection(float deltaTime, float step)
     {
         _collisionAtFrameBefore = false;
-        
         IntegrateMotion(deltaTime);
         
         if (p_n1.y - radius <= 0f)
@@ -709,45 +780,30 @@ private void CheckAndReset(ref Vector3 vector)
     private void CalculateBounce(float bounceDeltaTime)
     {
         //this first part calculates the new velocity and angular velocity immediately after the bounce
-        /*
-        CalculateTotalForces(v_n, w_n);
-        
-        a_n = _totalForces / mass;
-        v_n1 = v_n + bounceDeltaTime/2 * a_n;
-        p_n1 = p_n + bounceDeltaTime * v_n1;
-        
-        CalculateTotalForces(v_n1, w_n1);
-        
-        a_n = _totalForces / mass;
-        v_n1 +=  bounceDeltaTime/2 * a_n;
-        */
-        
         IntegrateMotion(bounceDeltaTime);
-
+        
         v_n = v_n1;
         w_n = w_n1;
-        //p_n1.y = radius;
         p_n = p_n1;
-
-        var alpha = 2f / 3f;
+        
+        float alpha = 2f / 3f;
         v_n1.x = v_n.x * (1 - alpha * coefficientOfHorizontalRestitution)  / (alpha + 1) -
                  alpha * (1 + coefficientOfHorizontalRestitution) / (alpha + 1) * radius * w_n.z;
 
         v_n1.y = -coefficientOfVerticalRestitution * v_n.y;
-        v_n1.z = v_n.z * (1 - alpha* coefficientOfHorizontalRestitution) / (alpha + 1) +
+        v_n1.z = v_n.z * (1 - alpha * coefficientOfHorizontalRestitution) / (alpha + 1) +
                  alpha * (1 + coefficientOfHorizontalRestitution) / (alpha + 1) * radius * w_n.x;
 
         w_n1.x = (alpha-coefficientOfHorizontalRestitution)/(alpha+1) * w_n.x + (coefficientOfHorizontalRestitution+1)/(alpha+1) * v_n.z/radius;
         w_n1.y = w_n.y * coefficientRotationRestitutionYaxis;
         w_n1.z = (alpha-coefficientOfHorizontalRestitution)/(alpha+1) * w_n.z - (coefficientOfHorizontalRestitution+1)/(alpha+1) * v_n.x/radius;
 
-        GetComponent<TrajectoryTracker>().bouncedPoints.Add(p_n1);
-        
         v_n = v_n1;
         w_n = w_n1;
-        p_n = p_n1;
         
-        if (v_n.y < 1e-2)
+        GetComponent<TrajectoryTracker>().bouncedPoints.Add(p_n);
+        
+        if (v_n.y < 1e-1)
         {
             v_n.y = 0;
             p_n.y = radius;
@@ -757,59 +813,14 @@ private void CheckAndReset(ref Vector3 vector)
         //this part calculates the trajectory of the ball starting from the moment when it touched the ground to the end of the frame
 
         var remainingTime = Time.fixedDeltaTime - bounceDeltaTime;
-
-        /*
-        //2ND ORDER VELOCITY VERLET
-
-        //F_k
-        CalculateTotalForces(v_n, w_n);
-        CalculateTotalTorque(v_n, w_n);
-        
-        a_n = _totalForces / mass;
-
-        //v_k+1/2
-        v_n1 = v_n + remainingTime/2 * a_n;
-        if(!_isBouncing)
-        {
-            if (_isSliding)
-                w_n1 = w_n + remainingTime / 2 * _frictionTorque / _inertialMomentum;
-            else
-                w_n1 = -Vector3.Cross(v_n1, Vector3.up) / radius;
-        }
-        else
-        {
-            w_n1 = w_n + remainingTime / 2 * _dragTorque / _inertialMomentum;
-        }
-
-        //p_k+1
-        p_n1 = p_n + remainingTime * v_n1;
-        transform.Rotate(Mathf.Rad2Deg * remainingTime * w_n1, Space.World);
-
-        //F_k+1
-        CalculateTotalForces(v_n1, w_n1);
-        CalculateTotalTorque(v_n1, w_n1);
-        a_n =_totalForces  / mass;
-
-        //v_k+1
-        v_n1 +=  remainingTime/2 * a_n;
-        if (!_isBouncing)
-        {
-            if (_isSliding)
-                w_n1 += remainingTime / 2 * _frictionTorque / _inertialMomentum;
-            else
-                w_n1 = -Vector3.Cross(v_n1, Vector3.up) / radius;
-        }
-        else
-        {
-            w_n1 += remainingTime/ 2 * _dragTorque / _inertialMomentum;
-        }
-        */
         
         IntegrateMotion(remainingTime);
 
         v_n = v_n1;
         w_n = w_n1;
         p_n = p_n1;
+        
+        GetComponent<TrajectoryTracker>().trajectoryPoints.Add(p_n);
     }
     
      private Vector3 FindInitialVelocity(Vector3 startPosition)
@@ -821,10 +832,21 @@ private void CheckAndReset(ref Vector3 vector)
         
         var count = 0;
         var error = float.MaxValue;
+        Quaternion rotation = Quaternion.identity;
 
-        while (error > 1e-2 && count < 10)
+        while (error > precalculationMaxError && count < maxIterations)
         {
-            var position = PrecomputeTrajectory(velocity);
+            var position = PrecomputeTrajectory(rotation * velocity);
+            
+            float dot = Vector3.Dot(velocity, Vector3.up);
+            float totalAngle = 90f - Mathf.Acos(dot) * Mathf.Rad2Deg;
+
+            if (totalAngle > 45)
+            {
+                break;
+            }
+            
+            velocity = rotation * velocity;
             
             var vTarget = startPosition - target.transform.position;
             var vIteration = startPosition - position;
@@ -836,17 +858,7 @@ private void CheckAndReset(ref Vector3 vector)
             var angle = Mathf.Acos(Mathf.Clamp(cosTheta, -1f, 1f)) * Mathf.Rad2Deg;
             Vector3 rotationAxis = Vector3.Cross(vIteration, vTarget).normalized;
 
-            Quaternion rotation = Quaternion.AngleAxis(angle, rotationAxis);
-            velocity = rotation * velocity;
-            
-
-            float dot = Vector3.Dot(velocity, Vector3.up);
-            float totalAngle = 90f - Mathf.Acos(dot) * Mathf.Rad2Deg;
-
-            if (totalAngle > 45)
-            {
-                break;
-            }
+            rotation = Quaternion.AngleAxis(angle, rotationAxis);
             
             count++;
         }
@@ -861,14 +873,14 @@ private void CheckAndReset(ref Vector3 vector)
      private Vector3 PrecomputeTrajectory(Vector3 velocity)
     {
         var stop = false;
-        var deltaTime = 1f/25f;
+        var deltaTime = 1f/precomputationFrameRate;
 
         v_n = velocity;
         p_n = transform.position;
         a_n = Vector3.zero;
         w_n1 = w0;
         w_n = w_n1;
-        alpha_n = Vector3.zero;
+        theta_n = Quaternion.identity;
 
         _isBouncing = !(p_n.y <= radius);
 
@@ -883,10 +895,8 @@ private void CheckAndReset(ref Vector3 vector)
             if (p_n1.x > target.transform.position.x)
             {
                 stop = true;
-                var y = p_n.y + (target.transform.position.x - p_n.x) / (p_n1.x - p_n.x) * (p_n1.y - p_n.y);
-                var z = p_n.z + (target.transform.position.x - p_n.x) / (p_n1.x - p_n.x) * (p_n1.z - p_n.z);
-                
-                pointOnLine = new Vector3(target.transform.position.x, y, z);
+                FindPositionOnTargetLine(deltaTime /2 , deltaTime / 2);
+                pointOnLine = p_n1;
             }
             
             v_n = v_n1;
@@ -895,6 +905,40 @@ private void CheckAndReset(ref Vector3 vector)
         }
         
         return pointOnLine;
+    }
+
+    private void FindPositionOnTargetLine(float deltaTime, float step)
+    {
+        IntegrateMotion(deltaTime);
+        
+        if (p_n1.x > target.transform.position.x)
+        {
+            //collision
+            if (step < CollisionDetectionError)
+            {
+                var correctDeltaTime = (deltaTime - step / 2);
+
+                IntegrateMotion(correctDeltaTime);
+                
+                return;
+            }
+            
+            FindPositionOnTargetLine(deltaTime - step/2, step/2);
+        }
+        else
+        {
+            //no collision
+            if (step < CollisionDetectionError)
+            {
+                var correctDeltaTime = (deltaTime + step / 2);
+
+                IntegrateMotion(correctDeltaTime);
+
+                return;
+            }
+
+            FindPositionOnTargetLine(deltaTime + step/2, step/2);
+        }
     }
 
     private List<Vector3> trajectoryPoints  = new List<Vector3>();
@@ -924,22 +968,28 @@ private void CheckAndReset(ref Vector3 vector)
     
     private void CheckDistanceFromTarget(float deltaTime)
     {
+        Vector3 pSaved = p_n1;
+        Vector3 vSaved = v_n1;
+        Vector3 wSaved = w_n1;
+        
         if (p_n1.x >= target.transform.position.x)
         {
-            float y = p_n.y + (target.transform.position.x - p_n.x) / (p_n1.x - p_n.x) * (p_n1.y - p_n.y);
-            float z = p_n.z + (target.transform.position.x - p_n.x) / (p_n1.x - p_n.x) * (p_n1.z - p_n.z);
-                
-            Vector3 pointOnLine = new Vector3(target.transform.position.x, y, z);
+            FindPositionOnTargetLine(deltaTime /2 , deltaTime / 2);
+            Vector3 pointOnLine = p_n1;
+            Instantiate(placeholder, pointOnLine, Quaternion.identity);
             
             Debug.Log("Runtime error: " + (Vector3.Distance(target.transform.position, pointOnLine)*1e3).ToString("F3") + " mm");
 
             precompute = false;
         }
+
+        p_n1 = pSaved;
+        v_n1 = vSaved;
+        w_n1 = wSaved;
     }
     
     void OnValidate()
     {
-       
         trajectoryPoints.Clear();
         CalculateTrajectory();
     }

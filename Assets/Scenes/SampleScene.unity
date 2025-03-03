@@ -122,6 +122,89 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &36080666
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 36080669}
+  - component: {fileID: 36080668}
+  - component: {fileID: 36080667}
+  m_Layer: 0
+  m_Name: BallPlaceholder
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!23 &36080667
+MeshRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 36080666}
+  m_Enabled: 1
+  m_CastShadows: 1
+  m_ReceiveShadows: 1
+  m_DynamicOccludee: 1
+  m_StaticShadowCaster: 0
+  m_MotionVectors: 1
+  m_LightProbeUsage: 1
+  m_ReflectionProbeUsage: 1
+  m_RayTracingMode: 2
+  m_RayTraceProcedural: 0
+  m_RenderingLayerMask: 1
+  m_RendererPriority: 0
+  m_Materials:
+  - {fileID: 2100000, guid: bab827989ecf67d4eaab7f42826b4b99, type: 2}
+  m_StaticBatchInfo:
+    firstSubMesh: 0
+    subMeshCount: 0
+  m_StaticBatchRoot: {fileID: 0}
+  m_ProbeAnchor: {fileID: 0}
+  m_LightProbeVolumeOverride: {fileID: 0}
+  m_ScaleInLightmap: 1
+  m_ReceiveGI: 1
+  m_PreserveUVs: 0
+  m_IgnoreNormalsForChartDetection: 0
+  m_ImportantGI: 0
+  m_StitchLightmapSeams: 1
+  m_SelectedEditorRenderState: 3
+  m_MinimumChartSize: 4
+  m_AutoUVMaxDistance: 0.5
+  m_AutoUVMaxAngle: 89
+  m_LightmapParameters: {fileID: 0}
+  m_SortingLayerID: 0
+  m_SortingLayer: 0
+  m_SortingOrder: 0
+  m_AdditionalVertexStreams: {fileID: 0}
+--- !u!33 &36080668
+MeshFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 36080666}
+  m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!4 &36080669
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 36080666}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -47.57, y: -23.4, z: 52.98}
+  m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
+  m_ConstrainProportionsScale: 1
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &366036849
 GameObject:
   m_ObjectHideFlags: 0
@@ -574,8 +657,8 @@ Transform:
   m_GameObject: {fileID: 1273250294}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 9.687, y: 2.17, z: 3.18}
-  m_LocalScale: {x: 0.24, y: 0.24, z: 0.24}
+  m_LocalPosition: {x: 9.687, y: 2.13, z: 2.94}
+  m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
@@ -736,7 +819,7 @@ Transform:
   m_GameObject: {fileID: 1608827529}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -7.06, y: 0.11, z: -14.18}
+  m_LocalPosition: {x: -7.12, y: 0.12, z: -1.39}
   m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
   m_Children: []
@@ -757,7 +840,7 @@ MonoBehaviour:
   trajectoryPoints: []
   bouncedPoints: []
   stopSlidingPoint: []
-  factor: 0.75
+  factor: 0.25
 --- !u!114 &1608827535
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -770,34 +853,38 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1ef2e2411a5b2fc45b017851064beb0d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  radius: 0.105
+  radius: 0.11
   mass: 0.43
-  coefficientOfVerticalRestitution: 0.62
-  coefficientOfHorizontalRestitution: 0.12
+  coefficientOfVerticalRestitution: 0.57
+  coefficientOfHorizontalRestitution: -0.75
   coefficientRotationRestitutionYaxis: 0
-  coefficientOfSlidingFriction: 0
+  coefficientOfSlidingFriction: 0.4
   coefficientOfRollingFriction: 0.08
   airDensity: 1.2
+  kinematicViscosityOfAir: 0.0000148
   dragCoefficient: 0.16
   customDragCoefficient: 0
   vc: 12.19
   vs: 1.309
-  kinematicViscosityOfAir: 0.0000148
   angularDragCoefficient: 0
   liftCoefficient: 0.9
-  v0: {x: 15.6, y: 8.3, z: 0}
-  w0: {x: 5, y: 35, z: 12}
-  frameByFrame: 0
-  frameCount: 0
-  precompute: 1
+  v0: {x: 30, y: 12, z: 0}
+  w0: {x: 0, y: 0, z: 100}
   initialSpeed: 30
-  comparisonSphere: {fileID: 370432185}
-  target: {fileID: 1273250294}
   velocityVerlet: 0
   explicitEuler: 0
   RK2: 1
   RK4: 0
   frameRate: 100
+  frameByFrame: 0
+  frameCount: 0
+  precompute: 0
+  precomputationFrameRate: 100
+  precalculationMaxError: 0.005
+  maxIterations: 10
+  comparisonSphere: {fileID: 370432185}
+  target: {fileID: 1273250294}
+  placeholder: {fileID: 36080666}
 --- !u!1 &1705050128
 GameObject:
   m_ObjectHideFlags: 0
@@ -1066,3 +1153,4 @@ SceneRoots:
   - {fileID: 1273250298}
   - {fileID: 1560916793}
   - {fileID: 1705050132}
+  - {fileID: 36080669}
