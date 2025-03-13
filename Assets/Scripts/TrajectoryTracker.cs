@@ -33,7 +33,7 @@ public class TrajectoryTracker : MonoBehaviour
 
         foreach (Vector3 point in stopSlidingPoint)
         {
-            Gizmos.DrawSphere(point + sphereSize * Vector3.up, sphereSize*factor); 
+            Gizmos.DrawSphere(point , sphereSize*factor); 
         }
     }
 }
