@@ -45,11 +45,10 @@ public class DisplayInfo
         Rect totalForceRect = new Rect(10, 270, 200, 30);
         
         Rect frictionTorque = new Rect(10, 300, 200, 30);
-        Rect dragTorque = new Rect(10, 320, 200, 30);
-        Rect totalTorques = new Rect(10, 340, 200, 30);
+        Rect totalTorques = new Rect(10, 320, 200, 30);
         
-        Rect timeToCompute = new Rect(10, 370, 200, 30);
-        Rect averageTimeToCompute = new Rect(10, 390, 200, 30);
+        Rect timeToCompute = new Rect(10, 350, 200, 30);
+        Rect averageTimeToCompute = new Rect(10, 370, 200, 30);
 
         GUI.Label(positionRect, "Position: " + ball.Position(), textStyle);
         GUI.Label(velocityRect, "Velocity: " + ball.Velocity(), textStyle);
@@ -71,7 +70,6 @@ public class DisplayInfo
         
         textStyle.normal.textColor = Color.blue;
         GUI.Label(frictionTorque, "Friction torque: " + ball.FrictionTorque(), textStyle);
-        GUI.Label(dragTorque, "Drag torque: " + ball.DragTorque(), textStyle);
         GUI.Label(totalTorques, "Total torques: " + ball.TotalTorque(), textStyle);
         
         textStyle.normal.textColor = Color.black;
