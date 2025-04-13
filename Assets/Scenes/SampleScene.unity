@@ -2844,7 +2844,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1ef2e2411a5b2fc45b017851064beb0d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  IsMoving: 0
+  state: 0
   radius: 0.11
   mass: 0.43
   coefficientOfVerticalRestitution: 0.7
@@ -2863,19 +2863,16 @@ MonoBehaviour:
   liftCoefficient: 0.9
   v0: {x: 0, y: 0, z: 0}
   w0: {x: 0, y: -25, z: -10}
-  initialSpeed: 25
   p0: {x: 0, y: 0, z: 0}
   maximumSpinValue: 30
-  velocityVerlet: 0
-  explicitEuler: 0
-  RK2: 1
-  RK4: 0
+  integrationMethod: 2
   frameRate: 100
   frameByFrame: 0
   interpolateFrames: 1
   frameCount: 0
   continuousFrameCount: 0
   precompute: 0
+  initialSpeed: 25
   precomputationFrameRate: 100
   precalculationMaxError: 0.005
   maxIterations: 20

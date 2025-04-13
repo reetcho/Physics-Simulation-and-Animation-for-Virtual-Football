@@ -9,6 +9,8 @@ public class Frame
     public Vector3 v_n;
     public Vector3 a_n;
     public Vector3 w_n;
+    
+    public Ball ball;
 
     public float potentialEnergy;
     public float kineticEnergy;

@@ -6,7 +6,7 @@ using Unity.VisualScripting;
 [InitializeOnLoad]
 public class DisplayInfo
 {
-    private static Ball ball;
+    private static BallPhysics _ballPhysics;
 
     static DisplayInfo()
     {
@@ -15,10 +15,10 @@ public class DisplayInfo
 
     private static void OnSceneGUI(SceneView sceneView)
     {
-        if (ball == null)
+        if (_ballPhysics == null)
         {
-            ball = Object.FindObjectOfType<Ball>(); 
-            if (ball == null) return;
+            _ballPhysics = Object.FindObjectOfType<BallPhysics>(); 
+            if (_ballPhysics == null) return;
         }
 
         Handles.BeginGUI();
@@ -50,31 +50,31 @@ public class DisplayInfo
         Rect timeToCompute = new Rect(10, 350, 200, 30);
         Rect averageTimeToCompute = new Rect(10, 370, 200, 30);
 
-        GUI.Label(positionRect, "Position: " + ball.Position(), textStyle);
-        GUI.Label(velocityRect, "Velocity: " + ball.Velocity(), textStyle);
-        GUI.Label(angularVelocityRect, "Angular velocity: " + ball.AngularVelocity(), textStyle);
-        GUI.Label(accelerationRect, "Acceleration: " + ball.Acceleration(), textStyle);
+        GUI.Label(positionRect, "Position: " + _ballPhysics.Position(), textStyle);
+        GUI.Label(velocityRect, "Velocity: " + _ballPhysics.Velocity(), textStyle);
+        GUI.Label(angularVelocityRect, "Angular velocity: " + _ballPhysics.AngularVelocity(), textStyle);
+        GUI.Label(accelerationRect, "Acceleration: " + _ballPhysics.Acceleration(), textStyle);
         
         textStyle.normal.textColor = Color.magenta;
-        GUI.Label(potentialRect, "Potential energy: " + ball.PotentialEnergy(), textStyle);
-        GUI.Label(kineticRect, "Kinetic energy: " + ball.KineticEnergy(), textStyle);
-        GUI.Label(rotationRect, "Rotational energy: " + ball.RotationalEnergy(), textStyle);
-        GUI.Label(totalEnergyRect, "Total energy: " + ball.TotalEnergy(), textStyle);
+        GUI.Label(potentialRect, "Potential energy: " + _ballPhysics.PotentialEnergy(), textStyle);
+        GUI.Label(kineticRect, "Kinetic energy: " + _ballPhysics.KineticEnergy(), textStyle);
+        GUI.Label(rotationRect, "Rotational energy: " + _ballPhysics.RotationalEnergy(), textStyle);
+        GUI.Label(totalEnergyRect, "Total energy: " + _ballPhysics.TotalEnergy(), textStyle);
         
         textStyle.normal.textColor = Color.green;
-        GUI.Label(dragForceRect, "Drag force: " + ball.DragForce(), textStyle);
-        GUI.Label(magnusForceRect, "Magnus force: " + ball.MagnusForce(), textStyle);
-        GUI.Label(normalForceRect, "Normal force: " + ball.NormalForce(), textStyle);
-        GUI.Label(frictionForceRect, "Friction force: " + ball.FrictionForce(), textStyle);
-        GUI.Label(totalForceRect, "Total forces: " + ball.TotalForces(), textStyle);
+        GUI.Label(dragForceRect, "Drag force: " + _ballPhysics.DragForce(), textStyle);
+        GUI.Label(magnusForceRect, "Magnus force: " + _ballPhysics.MagnusForce(), textStyle);
+        GUI.Label(normalForceRect, "Normal force: " + _ballPhysics.NormalForce(), textStyle);
+        GUI.Label(frictionForceRect, "Friction force: " + _ballPhysics.FrictionForce(), textStyle);
+        GUI.Label(totalForceRect, "Total forces: " + _ballPhysics.TotalForces(), textStyle);
         
         textStyle.normal.textColor = Color.blue;
-        GUI.Label(frictionTorque, "Friction torque: " + ball.FrictionTorque(), textStyle);
-        GUI.Label(totalTorques, "Total torques: " + ball.TotalTorque(), textStyle);
+        GUI.Label(frictionTorque, "Friction torque: " + _ballPhysics.FrictionTorque(), textStyle);
+        GUI.Label(totalTorques, "Total torques: " + _ballPhysics.TotalTorque(), textStyle);
         
         textStyle.normal.textColor = Color.black;
-        GUI.Label(timeToCompute, "Time to compute: " +  ball.TimeToCompute(), textStyle);
-        GUI.Label(averageTimeToCompute, "Average time to compute: " + ball.AverageTimeToCompute(), textStyle);
+        GUI.Label(timeToCompute, "Time to compute: " +  _ballPhysics.TimeToCompute(), textStyle);
+        GUI.Label(averageTimeToCompute, "Average time to compute: " + _ballPhysics.AverageTimeToCompute(), textStyle);
         
         Handles.EndGUI();
     }
@@ -83,7 +83,7 @@ public class DisplayInfo
 [InitializeOnLoad]
 public static class SphereProjectionEditor
 {
-    private static Ball ball; 
+    private static BallPhysics _ballPhysics; 
     private static Transform groundTransform; 
 
     static SphereProjectionEditor()
@@ -93,13 +93,13 @@ public static class SphereProjectionEditor
 
     private static void OnSceneGUI(SceneView sceneView)
     {
-        if (ball == null || groundTransform == null)
+        if (_ballPhysics == null || groundTransform == null)
         {
-            ball = GameObject.Find("Ball").GetComponent<Ball>(); 
+            _ballPhysics = GameObject.Find("Ball").GetComponent<BallPhysics>(); 
             GameObject ground = GameObject.Find("Ground"); 
             if (ground) groundTransform = ground.transform;
 
-            if (ball == null || groundTransform == null) return;
+            if (_ballPhysics == null || groundTransform == null) return;
         }
         
         Handles.color = Color.magenta;
@@ -112,7 +112,7 @@ public class PersistentTrajectory : MonoBehaviour
 {
     private LineRenderer lineRenderer;
     private List<Vector3> trajectoryPoints = new List<Vector3>();
-    private static Ball ball; 
+    private static BallPhysics _ballPhysics; 
 
     void Start()
     {
@@ -120,12 +120,12 @@ public class PersistentTrajectory : MonoBehaviour
         lineRenderer.startWidth = 0.05f;
         lineRenderer.endWidth = 0.05f;
         lineRenderer.positionCount = 0;
-        ball = GameObject.Find("Ball").GetComponent<Ball>();
+        _ballPhysics = GameObject.Find("Ball").GetComponent<BallPhysics>();
     }
 
     void Update()
     {
-        trajectoryPoints.Add(ball.Position());
+        trajectoryPoints.Add(_ballPhysics.Position());
         lineRenderer.positionCount = trajectoryPoints.Count;
         lineRenderer.SetPositions(trajectoryPoints.ToArray());
     }
@@ -134,7 +134,7 @@ public class PersistentTrajectory : MonoBehaviour
 [InitializeOnLoad]
 public static class TrajectoryEditor
 {
-    private static Ball ball; // Reference to your Ball object
+    private static BallPhysics _ballPhysics; // Reference to your Ball object
     private static float timeStep = 0.05f; // Time step per iteration
 
     static TrajectoryEditor()
@@ -144,14 +144,14 @@ public static class TrajectoryEditor
 
     private static void OnSceneGUI(SceneView sceneView)
     {
-        if (ball == null)
+        if (_ballPhysics == null)
         {
-            ball = Object.FindObjectOfType<Ball>(); // Find the Ball in the scene
-            if (ball == null) return; // Exit if no Ball found
+            _ballPhysics = Object.FindObjectOfType<BallPhysics>(); // Find the Ball in the scene
+            if (_ballPhysics == null) return; // Exit if no Ball found
         }
 
         Handles.color = Color.green; // Set trajectory color
-        List<Vector3> trajectoryPoints = CalculateTrajectory(ball.Position(), ball.Velocity(), Physics.gravity);
+        List<Vector3> trajectoryPoints = CalculateTrajectory(_ballPhysics.Position(), _ballPhysics.Velocity(), Physics.gravity);
 
         //Handles.DrawAAPolyLine(3, trajectoryPoints.ToArray());
     }
