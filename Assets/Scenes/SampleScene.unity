@@ -715,6 +715,7 @@ GameObject:
   - component: {fileID: 379902214}
   - component: {fileID: 379902213}
   - component: {fileID: 379902216}
+  - component: {fileID: 379902217}
   m_Layer: 0
   m_Name: CameraSwitcher
   m_TagString: Untagged
@@ -776,7 +777,8 @@ MonoBehaviour:
   handle: {fileID: 1877481159}
   chargingSlider: {fileID: 1118726915}
   directionLine: {fileID: 1025973886}
-  ball: {fileID: 1608827535}
+  ballPhysics: {fileID: 1608827535}
+  ball: {fileID: 1608827537}
   UItext: {fileID: 1882412394}
   cameraSwitcher: {fileID: 379902213}
   aimLine: {fileID: 1025973884}
@@ -787,6 +789,40 @@ MonoBehaviour:
   maxVerticalAngle: 89
   replaySpeed: 75
   replay: 0
+  simulationBall: {fileID: 379902217}
+--- !u!114 &379902217
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 379902212}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b67a3ee05644745bbc4b8f16a4daf1f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  position: {x: 0, y: 0, z: 0}
+  velocity: {x: 0, y: 0, z: 0}
+  rotation: {x: 0, y: 0, z: 0, w: 0}
+  angularVelocity: {x: 0, y: 0, z: 0}
+  state: 0
+  radius: 0.11
+  mass: 0.43
+  coefficientOfVerticalRestitution: 0.8
+  coefficientOfHorizontalRestitution: -0.75
+  coefficientRotationRestitutionYaxis: 0.85
+  coefficientOfSlidingFriction: 0.4
+  coefficientOfRollingFriction: 0.1
+  coefficientOfVerticalAxisSpinningFriction: 0.005
+  inertialMomentum: 0
+  dragCoefficient: 0.50096875
+  useCustomDragCoefficient: 0
+  customDragCoefficient: 0.3
+  vc: 12.19
+  vs: 1.309
+  liftCoefficient: 0.9
+  resetPosition: {x: 0, y: 0, z: 0}
 --- !u!1 &528549264
 GameObject:
   m_ObjectHideFlags: 0
@@ -2285,7 +2321,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0b7d07bdb57c98b48aaae1744ca81fb7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ball: {fileID: 1608827535}
+  ballPhysics: {fileID: 1608827535}
   target: {fileID: 1273250294}
   goal: {fileID: 697999028}
   distanceFromBall: 9.15
@@ -2794,6 +2830,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1608827533}
   - component: {fileID: 1608827535}
+  - component: {fileID: 1608827537}
   - component: {fileID: 1608827534}
   - component: {fileID: 1608827536}
   m_Layer: 0
@@ -2844,26 +2881,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1ef2e2411a5b2fc45b017851064beb0d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  state: 0
-  radius: 0.11
-  mass: 0.43
-  coefficientOfVerticalRestitution: 0.7
-  coefficientOfHorizontalRestitution: -0.8
-  coefficientRotationRestitutionYaxis: 0.975
-  coefficientOfSlidingFriction: 0.4
-  coefficientOfRollingFriction: 0.1
-  coefficientOfVerticalAxisSpinningFriction: 0.005
+  ballValues: {fileID: 1608827537}
+  Gravity: 9.81
   airDensity: 1.2
   kinematicViscosityOfAir: 0.0000148
-  dragCoefficient: 0.16
-  customDragCoefficient: 0
-  vc: 12.19
-  vs: 1.309
-  angularDragCoefficient: 0
-  liftCoefficient: 0.9
-  v0: {x: 0, y: 0, z: 0}
-  w0: {x: 0, y: -25, z: -10}
-  p0: {x: 0, y: 0, z: 0}
+  testInitialSpin: {x: 0, y: -25, z: 10}
+  testInitialSpeed: 25
   maximumSpinValue: 30
   integrationMethod: 2
   frameRate: 100
@@ -2872,18 +2895,17 @@ MonoBehaviour:
   frameCount: 0
   continuousFrameCount: 0
   precompute: 0
-  initialSpeed: 25
   precomputationFrameRate: 100
   precalculationMaxError: 0.005
   maxIterations: 20
   barrierShot: 0
   barrier: {fileID: 1208620062}
   constraint: {fileID: 1162758408}
-  targetKickTesting: 0
-  description: maximum spin value is 30, low and high speed are cut from the test
-  fileName: AdjustMethodTest_RK2_25_-25Y_-10Z_multip
-  testStartPosition: {x: -7, y: 0.110001, z: 0}
-  testEndPosition: {x: -7, y: 0.110001, z: -20}
+  targetKickTesting: 1
+  description: Double target shot
+  fileName: DoubleTarget
+  testStartPosition: {x: -7, y: 0.11, z: 0}
+  testEndPosition: {x: -7, y: 0.11, z: -20}
   minInitialSpeed: 16
   maxInitialSpeed: 40
   testSteps: 1000
@@ -2903,9 +2925,6 @@ MonoBehaviour:
   target: {fileID: 1273250294}
   placeholder: {fileID: 36080666}
   constraintPlaceholder: {fileID: 1689714968}
-  strengthSlider: {fileID: 1118726915}
-  spinSlider: {fileID: 0}
-  mainCamera: {fileID: 2014223459}
   noVerticalSpinBallPlaceholder: {fileID: 1426418528}
   noHorizontalSpinBallPlaceholder: {fileID: 551397053}
 --- !u!33 &1608827536
@@ -2916,6 +2935,39 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1608827529}
   m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &1608827537
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1608827529}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b67a3ee05644745bbc4b8f16a4daf1f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  position: {x: 0, y: 0, z: 0}
+  velocity: {x: 0, y: 0, z: 0}
+  rotation: {x: 0, y: 0, z: 0, w: 0}
+  angularVelocity: {x: 0, y: 0, z: 0}
+  state: 0
+  radius: 0.11
+  mass: 0.43
+  coefficientOfVerticalRestitution: 0.8
+  coefficientOfHorizontalRestitution: -0.75
+  coefficientRotationRestitutionYaxis: 0.85
+  coefficientOfSlidingFriction: 0.4
+  coefficientOfRollingFriction: 0.1
+  coefficientOfVerticalAxisSpinningFriction: 0.005
+  inertialMomentum: 0
+  dragCoefficient: 0.50096875
+  useCustomDragCoefficient: 0
+  customDragCoefficient: 0.3
+  vc: 12.19
+  vs: 1.309
+  liftCoefficient: 0.9
+  resetPosition: {x: 0, y: 0, z: 0}
 --- !u!4 &1646473989 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 242215414263605430, guid: 27e9ecedef0387a4eb24e37fb3c543e0, type: 3}

@@ -14,7 +14,7 @@ public class RotateBarrierTowardsBall : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if(ballPhysics.ball.state == BallState.Stopped && !ballPhysics.frameByFrame)
+        if(ballPhysics.ballValues.state == BallState.Stopped && !ballPhysics.frameByFrame)
         {
             Vector3 direction = ballPhysics.transform.position - transform.position;
             direction.y = 0;
