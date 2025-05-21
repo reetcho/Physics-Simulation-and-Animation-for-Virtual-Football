@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using TMPro;
+using Unity.VisualScripting;
 using UnityEditor.AnimatedValues;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -61,7 +62,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
 
     void Update()
     {
-        if (ballPhysics.ballValues.state == BallState.Stopped && !directionLine.enabled && !ballPhysics.frameByFrame)
+        if (ballPhysics.ball.state == BallState.Stopped && !directionLine.enabled && !ballPhysics.useFrameByFrameMode)
         {
             _trajectoryPreview = ComputeKickTrajectory(direction, 30, GetSpinValue());
             directionLine.enabled = true;
@@ -69,7 +70,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
             UpdateDirectionLine();
         }
 
-        if (Gamepad.current != null && ballPhysics.ballValues.state == BallState.Stopped && !ballPhysics.frameByFrame)
+        if (Gamepad.current != null && ballPhysics.ball.state == BallState.Stopped && !ballPhysics.useFrameByFrameMode)
         {
             if (Gamepad.current.squareButton.isPressed)
             {
@@ -77,14 +78,14 @@ public class InteractionController : MonoBehaviour, IDragHandler
             }
             else if (Gamepad.current.squareButton.wasReleasedThisFrame)
             {
-                Vector3 spin = new Vector3(0, -GetSpinValue().x, -GetSpinValue().y) * ballPhysics.maximumSpinValue;
+                Vector3 spin = new Vector3(0, -GetSpinValue().x, -GetSpinValue().y) * ball.maximumSpinValue;
                 switch (mode)
                 {
                     case 0: ballPhysics.Kick(direction, chargingSlider.value, spin);
                         break;
                     case 1: ballPhysics.TargetedKick(chargingSlider.value, spin);
                         break;
-                    case 2: ballPhysics.DoubleTargetedKick(chargingSlider.value);
+                    case 2: ballPhysics.TargetedKickWithConstraint(chargingSlider.value);
                         break;
                 }
 
@@ -132,7 +133,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
                 chargingSlider.minValue;
         }
 
-        if (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame && !ballPhysics.frameByFrame)
+        if (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame && !ballPhysics.useFrameByFrameMode)
         {
             ballPhysics.Reset();
             normalizedValue = Vector2.zero;
@@ -147,17 +148,17 @@ public class InteractionController : MonoBehaviour, IDragHandler
 
         if (Gamepad.current != null && Gamepad.current.selectButton.wasPressedThisFrame)
         {
-            ballPhysics.frameByFrame = !ballPhysics.frameByFrame;
-            ballPhysics.frameCount = ballPhysics.frameArray.Length-1;
-            _continuousFrameCount = ballPhysics.frameArray.Length - 1;
-            ballPhysics.continuousFrameCount = _continuousFrameCount;
+            ballPhysics.useFrameByFrameMode = !ballPhysics.useFrameByFrameMode;
+            ballPhysics.FrameCount = ball.NewestFrameIndex-1;
+            _continuousFrameCount = ball.NewestFrameIndex-1;
+            ballPhysics.ContinuousFrameCount = _continuousFrameCount;
 
-            if (ballPhysics.frameByFrame)
+            if (ballPhysics.useFrameByFrameMode)
             {
                 replay = true;
                 UItext.SetText("REPLAY MODE");
                 savedPos = ball.position;
-                savedRot = ball.rotation;
+                savedRot = ball.orientation;
                 kickUI.SetActive(false);
 
             }
@@ -165,7 +166,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
             {
                 replay = false;
                 ball.position = savedPos;
-                ball.rotation = savedRot;
+                ball.orientation = savedRot;
                 switch (mode)
                 {
                     case 0: UItext.SetText("NORMAL KICK MODE");
@@ -175,7 +176,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
                     case 2: UItext.SetText("DOUBLE TARGETED KICK MODE");
                         break;
                 }
-                if(ballPhysics.ballValues.state == BallState.Stopped)
+                if(ballPhysics.ball.state == BallState.Stopped)
                     kickUI.SetActive(true);
             }
         }
@@ -185,7 +186,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
     {
         if (Gamepad.current != null)
         {
-            if (ballPhysics.frameByFrame)
+            if (ballPhysics.useFrameByFrameMode)
             {
                 float r2Value = Gamepad.current.rightTrigger.ReadValue();
                 float l2Value = Gamepad.current.leftTrigger.ReadValue();
@@ -193,13 +194,21 @@ public class InteractionController : MonoBehaviour, IDragHandler
                 if (r2Value > 0.05f)
                 {
                     _continuousFrameCount += r2Value * replaySpeed * Time.fixedDeltaTime;
-                    
-                    if (_continuousFrameCount > ballPhysics.frameArray.Length - 1)
+
+                    if (_continuousFrameCount > ball.NewestFrameIndex-1)
                     {
-                        _continuousFrameCount = ballPhysics.frameArray.Length - 1;
+                        if (_continuousFrameCount < ball.OldestFrameIndex || ball.OldestFrameIndex == 0)
+                        {
+                            _continuousFrameCount = ball.NewestFrameIndex-1;
+                        }
                     }
                     
-                    ballPhysics.frameCount = Mathf.Min(Mathf.FloorToInt(_continuousFrameCount), ballPhysics.frameArray.Length - 2);
+                    if (_continuousFrameCount > ball.Frames.Length - 1)
+                    {
+                        _continuousFrameCount = 0;
+                    }
+                    
+                    ballPhysics.FrameCount = Mathf.FloorToInt(_continuousFrameCount);
                 }
 
                 if (l2Value > 0.05f)
@@ -208,23 +217,32 @@ public class InteractionController : MonoBehaviour, IDragHandler
                     
                     if (_continuousFrameCount < 0)
                     {
-                        _continuousFrameCount = 0;
+                        if(ball.OldestFrameIndex != 0)
+                            _continuousFrameCount = ball.Frames.Length - 1;
+                        else
+                            _continuousFrameCount = 0;
+                    }
+
+                    if (_continuousFrameCount < ball.OldestFrameIndex && _continuousFrameCount > ball.NewestFrameIndex)
+                    {
+                        _continuousFrameCount = ball.OldestFrameIndex;
                     }
                     
-                    ballPhysics.frameCount = Mathf.Max(Mathf.FloorToInt(_continuousFrameCount), 0);
+                    ballPhysics.FrameCount = Mathf.FloorToInt(_continuousFrameCount);
                 }
                 
-                _continuousFrameCount = Mathf.Clamp(_continuousFrameCount, 0, ballPhysics.frameArray.Length - 1);
-                ballPhysics.continuousFrameCount = _continuousFrameCount;
+                _continuousFrameCount = Mathf.Clamp(_continuousFrameCount, 0, ball.Frames.Length - 1);
+                ballPhysics.ContinuousFrameCount = _continuousFrameCount;
             }
             
-            if(ballPhysics.ballValues.state == BallState.Stopped)
+            if(ballPhysics.ball.state == BallState.Stopped)
             {
                 Vector2 stickInput = Gamepad.current.leftStick.ReadValue();
 
                 if (Gamepad.current.circleButton.isPressed && stickInput.magnitude > 0.1f)
                 {
                     MoveBallWithCamera(stickInput);
+                    _trajectoryPreview = ComputeKickTrajectory(direction, 30, GetSpinValue());
                 }
                 else if (stickInput.magnitude > 0.1f)
                 {
@@ -292,7 +310,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
 
     private void UpdateDirectionLine()
     {
-        if (directionLine != null && ballPhysics.ballValues.state == BallState.Stopped)
+        if (directionLine != null && ballPhysics.ball.state == BallState.Stopped)
         {
             directionLine.positionCount = _trajectoryPreview.Count;
 
@@ -338,14 +356,15 @@ public class InteractionController : MonoBehaviour, IDragHandler
         Quaternion targetRotation = Quaternion.LookRotation(targetXY.normalized, Vector3.up);
 
         simulationBall.position = ball.position;
-        simulationBall.rotation = ball.rotation;
+        simulationBall.orientation = ball.orientation;
         simulationBall.velocity = direction * speed;
-        simulationBall.angularVelocity = targetRotation * new Vector3(spin.y, 0, 0) * ballPhysics.maximumSpinValue;
-        simulationBall.angularVelocity.y = -spin.x * ballPhysics.maximumSpinValue;
+        simulationBall.angularVelocity = targetRotation * new Vector3(spin.y, 0, 0) * ball.maximumSpinValue * 4f;
+        simulationBall.angularVelocity.y = -spin.x * ball.maximumSpinValue;
+        simulationBall.state = BallState.Bouncing;
         
         for (int i = 0; i < 15; i++)
         {
-            ballPhysics.ComputeFrame(deltaTime, simulationBall);
+            ballPhysics.UpdateBallDynamics(deltaTime, simulationBall);
             kickTrajectory.Add(simulationBall.position);
         }
         

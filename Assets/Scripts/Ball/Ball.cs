@@ -4,100 +4,178 @@ using Vector3 = UnityEngine.Vector3;
 
 public class Ball : MonoBehaviour
 {
-    public Vector3 position;
-    public Vector3 velocity;
-    public Quaternion rotation;
-    public Vector3 angularVelocity;
-    public BallState state;
-    
-    [Header("Ball properties")]
-    public float radius;
-    public float mass;
-    [Range(0, 1)] public float coefficientOfVerticalRestitution;
-    [Range(-1, 1)] public float coefficientOfHorizontalRestitution;
-    //TODO commentare
-    [Range(-1, 1)] public float coefficientRotationRestitutionYaxis;
-    
-    [Header("Friction")]
-    [Range(0, 1)] public float coefficientOfSlidingFriction;
-    [Range(0, 1)] public float coefficientOfRollingFriction; 
-    //TODO
-    [Range(0,1)] public float coefficientOfVerticalAxisSpinningFriction;
-    
-    public float inertialMomentum; //assumption of thin sphere -> 2/3 * mass * radius^2
-    public float dragCoefficient;
-    public bool useCustomDragCoefficient;
-    public float customDragCoefficient;
-    
-    //TODO SPIEGARE CHE COSA SONO vc e vs
-    public float vc;
-    public float vs;
-    public float liftCoefficient;
-
-
-    private const float Gravity = 9.81f;
-    public Vector3 resetPosition;
-
-    private void Awake()
-    {
-        transform.localScale = new Vector3(radius, radius, radius)*2;
-        inertialMomentum = 2f/3f * mass * radius * radius;
+    #region Variables
+        public Vector3 position;
+        public Vector3 velocity;
+        public Quaternion orientation;
+        public Vector3 angularVelocity;
+        public BallState state;
         
-        resetPosition = transform.position;
-        position = resetPosition;
-        rotation = transform.rotation;
-    }
-
-    private void FixedUpdate()
-    {
-        transform.position = position;
-        transform.rotation = rotation;
-    }
-
-    public void Reset()
-    {
-        resetPosition.y = radius;
-        position = resetPosition;
-        velocity = Vector3.zero;
-        rotation = Quaternion.identity;
-        angularVelocity = Vector3.zero;
-        state = BallState.Stopped;
-    }
-    
-    public void ResetValues()
-    {
-        velocity = Vector3.zero;
-        angularVelocity = Vector3.zero;
-        state = BallState.Stopped;
-    }
-    
-    public float CalculatePotentialEnergy()
-    {
-        if(state != BallState.Bouncing)
-            return 0f;
+        [Header("Ball properties")]
+        public float radius;
+        public float mass;
+        public float inertialMomentumConstant = 2f/3f; //hollow sphere 
+        public float InertialMomentum { get; private set; } //assumption of thin sphere -> 2/3 * mass * radius^2
+        [Range(0, 1)] public float coefficientOfVerticalRestitution;
+        [Range(-1, 1)] public float coefficientOfHorizontalRestitution;
+        [Range(0, 1)] public float coefficientOfVerticalAxisSpinRestitution; //percentage of angular velocity around y-axis that is preserved after the ball bounces on the ground
         
-        return mass * Gravity * (position.y - radius);
-    }
-
-    public float CalculateKineticEnergy()
-    {
-        return 0.5f * mass * velocity.magnitude * velocity.magnitude;
-    }
-
-    public float CalculateRotationalEnergy()
-    {
-        return 0.5f * inertialMomentum * angularVelocity.magnitude * angularVelocity.magnitude;
-    }
-
-    public float CalculateTotalEnergy()
-    {
-        float kineticEnergy = CalculateKineticEnergy();
-        float potentialEnergy = CalculatePotentialEnergy();
-        float rotationalEnergy = CalculateRotationalEnergy();
+        [Header("Friction force")]
+        [Range(0, 1)] public float coefficientOfSlidingFriction;
+        [Range(0, 1)] public float coefficientOfRollingFriction; 
+        [Range(0, 1)] public float coefficientOfVerticalAxisSpinningFriction; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
         
-        return kineticEnergy + potentialEnergy + rotationalEnergy;
-    }
+        [Header("Drag force and Magnus force")]
+        public float dragCoefficient;
+        //drag critical speed from laminar to turbulent
+        public float speedOfTransitionFromLaminarToTurbulentDrag;
+        //drag transition sharpness speed
+        public float dragTransitionSlope;
+        public bool useConstantDragCoefficient;
+        public float constantDragCoefficient;
+        public float liftCoefficient;
+        
+        [Header("Other")]
+        public Vector3 resetPosition;
+        public float maximumSpinValue = 30f;
+        
+        //TODO spostare fuori 
+        public Frame[] Frames { get; private set; } = new Frame[1000];
+        public int NewestFrameIndex { get; private set; }
+        public int OldestFrameIndex { get; private set; }
     
+    #endregion 
+        
+    #region Unity
+        private void Awake()
+        {
+            transform.localScale = new Vector3(radius, radius, radius)*2;
+            InertialMomentum = inertialMomentumConstant * mass * radius * radius;
+            
+            resetPosition = transform.position;
+            position = resetPosition;
+            orientation = transform.rotation;
+
+            Reset();
+        }
+
+        private void FixedUpdate()
+        {
+            transform.position = position;
+            transform.rotation = orientation;
+
+            CheckIsMoving();
+        }
+        
+        void OnDrawGizmos()
+        {
+            DrawTrajectory();
+        }
+        
+    #endregion
+
+    #region Energy
+        public float CalculatePotentialEnergy()
+        {
+            if(state != BallState.Bouncing)
+                return 0f;
+            
+            return mass * BallPhysics.Gravity * (position.y - radius);
+        }
+
+        public float CalculateKineticEnergy()
+        {
+            return 0.5f * mass * velocity.magnitude * velocity.magnitude;
+        }
+
+        public float CalculateRotationalEnergy()
+        {
+            return 0.5f * InertialMomentum * angularVelocity.magnitude * angularVelocity.magnitude;
+        }
+
+        public float CalculateTotalEnergy()
+        {
+            float kineticEnergy = CalculateKineticEnergy();
+            float potentialEnergy = CalculatePotentialEnergy();
+            float rotationalEnergy = CalculateRotationalEnergy();
+            
+            return kineticEnergy + potentialEnergy + rotationalEnergy;
+        }
+        
+    #endregion
+    
+    #region Utils
+        private void CheckIsMoving()
+        {
+            if (CalculateTotalEnergy() < 1e-4)
+            {
+                ResetValues();
+            }
+        }
+        public void Reset()
+        {
+            position = resetPosition;
+            velocity = Vector3.zero;
+            orientation = Quaternion.identity;
+            angularVelocity = Vector3.zero;
+            state = BallState.Stopped;
+                
+            Frames = new Frame[1000];
+            NewestFrameIndex = 0;
+            OldestFrameIndex = 0;
+        }
+        private void ResetValues()
+        {
+            velocity = Vector3.zero;
+            angularVelocity = Vector3.zero;
+            state = BallState.Stopped;
+        }
+        
+        public void AddTrajectoryFrame(float timeToComputeFrame = 0f)
+        {
+            if (state != BallState.Stopped)
+            {
+                Frame frame = new Frame(position, orientation, velocity, angularVelocity, state, timeToComputeFrame);
+                Frames[NewestFrameIndex] = frame;
+                NewestFrameIndex++;
+                
+                if(NewestFrameIndex >= Frames.Length)
+                    NewestFrameIndex = 0;
+                
+                if(NewestFrameIndex == OldestFrameIndex)
+                    OldestFrameIndex++;
+               
+                if(OldestFrameIndex >= Frames.Length)
+                    OldestFrameIndex = 0;
+            }
+        }
+        private void DrawTrajectory()
+        {
+            if(Frames.Length > 0)
+            {
+                foreach (Frame frame in Frames)
+                {
+                    if(frame != null)
+                    {
+                        switch (frame.State)
+                        {
+                            case BallState.Bouncing:
+                                Gizmos.color = Color.red;
+                                break;
+                            case BallState.Sliding:
+                                Gizmos.color = Color.blue;
+                                break;
+                            case BallState.Rolling:
+                                Gizmos.color = Color.green;
+                                break;
+                        }
+                        Gizmos.DrawSphere(frame.Position, radius / 4);
+                    }
+                }
+            }
+        }
+    
+    #endregion
 }
 
 public enum BallState

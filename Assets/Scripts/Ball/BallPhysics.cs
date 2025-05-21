@@ -1,1088 +1,1223 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 using Quaternion = UnityEngine.Quaternion;
+using Random = System.Random;
 using Vector2 = UnityEngine.Vector2;
 using Vector3 = UnityEngine.Vector3;
 
 public class BallPhysics : MonoBehaviour
 {
-    public Ball ballValues;
+    #region Variables
+        public Ball ball;
 
-    private Vector3 _frictionForce;
-    private Vector3 _previousSignOfFriction;
-    
-    
-    
-    [Header("Constants")]
-    [SerializeField] private float Gravity = 9.81f; 
-    [SerializeField] private float airDensity = 1.2f;
-    [SerializeField] private float kinematicViscosityOfAir = 1.48f * 1e-5f;
-    private const float CollisionDetectionError = 1e-5f;
+        public int totalIterations;
+        public float averageIterations = 0;
+        public int numberOfTimeTRajWasCalled = 0;
+        
+        [Header("Constants")]
+        [SerializeField] private float airDensity = 1.2f;
+        [SerializeField] private float kinematicViscosityOfAir = 1.48f * 1e-5f;
+        public static readonly float Gravity = 9.81f; 
+        private const float BinarySearchThreshold = 1e-6f;
+        
+        [Header("Simulation")]
+        [SerializeField] private IntegrationMethod integrationMethod;
+        [SerializeField] private float framePerSecond;
+        
+        [Header("Targeted shot")]
+        [SerializeField] private AnimationCurve targetMaximumErrorCurve;
+        [SerializeField] private float constraintMaximumError;
+        [SerializeField] private int maxIterations;
 
+        [Header("Frame History")] 
+        public bool useFrameByFrameMode;
+        public bool interpolateFrames;
+        public int FrameCount { private get; set; }
+        public float ContinuousFrameCount { private get; set; }
+        
+        [Header("Other")]
+        [SerializeField] private GameObject target;
+        [SerializeField] private GameObject closestPointToTargetPlaceholder;
+        [SerializeField] private GameObject constraint;
+        [SerializeField] private GameObject closestPointToConstraintPlaceholder;
+        private readonly List<List<Vector3>> _precalculationTrajectories = new List<List<Vector3>>();
+        private List<Vector3> _currentTrajectory;
+        private float _timeToComputeFrame;
+        private TestData _testData;
+        private bool _testRunning;
+        
+    #endregion
     
-    [Header("Test Initial values")]
-    [SerializeField] private Vector3 testInitialSpin;
-    [SerializeField] private float testInitialSpeed;
-    
-    public float maximumSpinValue = 30f;
-    
-    [Header("Simulation")]
-    //TODO mettere un enum
-    [SerializeField] private IntegrationMethod integrationMethod;
-    //TODO 100 fps
-    [SerializeField] private float frameRate;
-
-    [Header("Tracker")]
-    //TODO utilizzare verbi per i boolean
-    public bool frameByFrame;
-    public bool interpolateFrames;
-    [Range(0,1000)] public int frameCount;
-    public float continuousFrameCount;
-    private Queue<Frame> _frames;
-    public Frame[] frameArray;
-    //TODO
-    private float _timeToCompute;
-    private float _totalTimeToCompute = 0f;
-
-    [Header("Targeted shot")]
-    //TODO eliminare 
-    public bool precompute;
-    
-    [SerializeField] private int precomputationFrameRate;
-    [SerializeField] private float precalculationMaxError;
-    [SerializeField] private int maxIterations;
-    //TODO verbi!!
-    public bool barrierShot;
-    [SerializeField] private GameObject barrier;
-    [SerializeField] private GameObject constraint;
-
-    
-    //TODO creare una struttura per questo
-    [Header("Testing")]
-    [SerializeField] private bool targetKickTesting;
-    private SaveSystem saveSystem;
-    [SerializeField] private String description;
-    [SerializeField] private String fileName;
-    [SerializeField] private Vector3 testStartPosition;
-    [SerializeField] private Vector3 testEndPosition;
-    [SerializeField] private float minInitialSpeed;
-    [SerializeField] private float maxInitialSpeed;
-    [SerializeField] private int testSteps;
-    [SerializeField] private List<Vector3> startPositions;
-    [SerializeField] private List<float> distances;
-    [SerializeField] private List<float> errors;
-    [SerializeField] private List<int> iterations;
-    [SerializeField] private List<Vector3> outliersStartPositions;
-    [SerializeField] private List<float> outliersError;
-    [SerializeField] private List<float> constraintErrors;
-    [SerializeField] private List<float> initialSpeeds;
-    [SerializeField] private List<float> zSpin;
-    [SerializeField] private List<float> ySpin;
-    [SerializeField] private List<float> computationTime;
-    [SerializeField] private float averageComputationTime = 0f;
-    //TODO 
-    private int _currentStep = 0;
-    private Vector3 _testCurrentPosition;
-    private float _totalComputationTime;
-    
-    [Header("Other")]
-    [SerializeField] private GameObject comparisonSphere;
-    [SerializeField] private GameObject target;
-    [SerializeField] private GameObject placeholder;
-    [SerializeField] private GameObject constraintPlaceholder;
-    private List<List<Vector3>> _precalculationTrajectories =  new List<List<Vector3>>();
-    private List<Vector3> _currentTrajectory;
-    
-    public void Reset()
-    {
-        _precalculationTrajectories.Clear();
-        
-        ballValues.Reset();
-        
-        _frames.Clear();
-    }
-
-    public void Kick(Vector3 direction, float speed, Vector3 spin)
-    {
-        _precalculationTrajectories.Clear();
-        
-        ballValues.velocity = direction * speed;
-        ballValues.angularVelocity = spin;
-        ballValues.state = BallState.Bouncing;
-        
-        AddTrajectoryFrame();
-    }
-
-    public void TargetedKick(float speed, Vector3 spin)
-    {
-        _precalculationTrajectories.Clear();
-        
-        Vector3 initialPosition = ballValues.position;
-        (ballValues.velocity, ballValues.angularVelocity) = FindInitialVelocity(initialPosition, speed, spin, 0, 45);
-        ballValues.state = BallState.Bouncing;
-        
-        AddTrajectoryFrame();
-    }
-    
-    public void DoubleTargetedKick(float speed)
-    {
-        _precalculationTrajectories.Clear();
-        Vector3 initialPosition = ballValues.position;
-        
-        //TODO barrier shot deve essere passato in input alla funzione
-        barrierShot = true;
-        (ballValues.velocity, ballValues.angularVelocity) = FindInitialVelocityWithConstraint(initialPosition, speed);
-        ballValues.state = BallState.Bouncing;
-        barrierShot = false;
-
-        AddTrajectoryFrame();
-    }
-   
-    void Awake()
-    {
-        Application.targetFrameRate = -1;
-        
-        Time.fixedDeltaTime = 1/frameRate;
-        
-        _frames = new Queue<Frame>();
-
-        Reset();
-        
-        if (targetKickTesting)
+    #region Unity
+        void Awake()
         {
-            saveSystem = new SaveSystem();
-            startPositions = new List<Vector3>();
-            distances = new List<float>();
-            errors = new List<float>();
-            outliersStartPositions = new List<Vector3>();
-            outliersError = new List<float>();
-            precompute = false;
-
-            if (barrierShot)
+            Application.targetFrameRate = -1;
+            Time.fixedDeltaTime = 1/framePerSecond;
+        }
+        void FixedUpdate()
+        {
+            if (useFrameByFrameMode)
             {
-                testInitialSpeed = minInitialSpeed;
+                HandleFrameByFrame();
+                return;
             }
+            
+            if (ball.state == BallState.Stopped)
+                return;
+            
+            float startTime = Time.realtimeSinceStartup;
+            UpdateBallDynamics(Time.fixedDeltaTime, ball);
+            float endTime = Time.realtimeSinceStartup;
+            _timeToComputeFrame = endTime - startTime;
+
+            ball.AddTrajectoryFrame(_timeToComputeFrame);
+        }
+        void OnDrawGizmos()
+        {
+            DisplayComputedTrajectories();
         }
         
-    }
-
-    void Update()
-    {
-        if (targetKickTesting)
+    #endregion
+    
+    #region Simulation
+        public void UpdateBallDynamics(float deltaTime, Ball targetBall)
         {
-            if(!precompute)
+            //given the current state of the ball, the motion is integrated and the new state of the ball after delta time is returned
+            (Vector3 newPosition, Quaternion newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, targetBall.position, targetBall.orientation, targetBall.velocity, targetBall.angularVelocity, targetBall.state);
+            
+            //checks if there was a collision and if so handles it
+            if (newPosition.y - targetBall.radius < 0f)
             {
-                _precalculationTrajectories.Clear();
-                precompute = true;
+                (newPosition, newOrientation, newVelocity, newAngularVelocity, targetBall.state) = HandleGroundCollisionAndBounce(deltaTime, targetBall.position, targetBall.orientation, targetBall.velocity, targetBall.angularVelocity, targetBall.state);
+            }
+            
+            //checks if the ball is a pure rolling state
+            targetBall.state = CheckPureRolling(targetBall.state, newVelocity, newAngularVelocity, targetBall.velocity, targetBall.angularVelocity);
+            
+            //updates the state of the ball
+            targetBall.position = newPosition;
+            targetBall.orientation = newOrientation;
+            targetBall.velocity = newVelocity;
+            targetBall.angularVelocity = newAngularVelocity;
+        }
+        
+        //this method chooses one of the four integration method to compute the new state of the ball after delta time
+        private (Vector3, Quaternion, Vector3, Vector3) IntegrateMotion(float deltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+        {
+            switch (integrationMethod)
+            {
+                case IntegrationMethod.VelocityVerlet:
+                    return VelocityVerlet(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+                case IntegrationMethod.ExplicitEuler:
+                    return ExplicitEuler(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+                case IntegrationMethod.Rk2:
+                    return Runge_Kutta_2(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+                case IntegrationMethod.Rk4:
+                    return Runge_Kutta_4(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+            }
+                
+            return (Vector3.zero, Quaternion.identity, Vector3.zero, Vector3.zero);
+        }
+        
+        //this method checks the pure rolling condition (HEURISTIC)
+        private BallState CheckPureRolling(BallState state, Vector3 currentVelocity, Vector3 currentAngularVelocity, Vector3 previousVelocity, Vector3 previousAngularVelocity)
+        {
+            //if the ball is not sliding it means that it is either bouncing or it is already rolling, therefore returns the current given state
+            if (state != BallState.Sliding)
+                return state;
+            
+            //compute the velocity of the contact point of the current and the previous frames
+            float currentContactPointVelocity = (currentVelocity - Vector3.Cross(currentAngularVelocity * ball.radius, Vector3.up)).magnitude;
+            float previousContactPointVelocity = (previousVelocity - Vector3.Cross(previousAngularVelocity * ball.radius, Vector3.up)).magnitude;
+            
+            //the state is set to rolling when the current contact point velocity becomes greater than the previous, meaning that it reached the minimum
+            //this is done in this way because after this point the contact point velocity oscillating between -epsilon and +epsilon, resulting in an infinite cycle due to numerical error (HEURISTIC)
+            if(currentContactPointVelocity > previousContactPointVelocity)
+                state = BallState.Rolling;
+            
+            return state;
+        }
+        
+        #region Integration Methods
+            private (Vector3, Quaternion, Vector3, Vector3) VelocityVerlet(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state) 
+            {
+                 //computes the acceleration/angular acceleration based on current state
+                 Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
+                 Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
 
-                if (barrierShot)
-                {
-                    testInitialSpeed += (maxInitialSpeed - minInitialSpeed) / testSteps;
-                    (ballValues.velocity, ballValues.angularVelocity) = FindInitialVelocityWithConstraint(ballValues.position, testInitialSpeed);
-                }
-                else
-                {
-                    Vector3 stepDirection = (testEndPosition - testStartPosition) / testSteps;
-                    _testCurrentPosition = testStartPosition + stepDirection * _currentStep;
-                    transform.position = _testCurrentPosition;
-                    (ballValues.velocity, ballValues.angularVelocity) = FindInitialVelocity(_testCurrentPosition, testInitialSpeed, testInitialSpin,0, 45f);
-                }
-                precompute = false;
+                 //first half-step velocity/angular velocity update
+                 Vector3 newVelocity = initialVelocity + deltaTime/2 * acceleration;
+                 Vector3 newAngularVelocity = initialAngularVelocity + deltaTime/2 * angularAcceleration;
+                 
+                 //if ball is rolling, constrain angular velocity to match pure rolling condition
+                 if(state == BallState.Rolling)
+                 {
+                     float y = newAngularVelocity.y;
+                     newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
+                     newAngularVelocity.y = y;
+                 }
+                 
+                 //full step position/orientation update
+                 Vector3 newPosition = initialPosition + deltaTime * newVelocity;
+                 Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
 
-                _currentStep++;
+                 //the acceleration/angular acceleration based on new half-step state
+                 acceleration = CalculateTotalForces(newVelocity, newAngularVelocity, state) / ball.mass;
+                 angularAcceleration = CalculateTotalTorque(newVelocity, newAngularVelocity, state) / ball.InertialMomentum;
 
-                if (_currentStep > testSteps)
+                 //second half-step velocity/angular velocity update
+                 newVelocity += deltaTime/2 * acceleration;
+                 newAngularVelocity += deltaTime/2 * angularAcceleration;
+
+                 //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
+                 if (state != BallState.Bouncing && state != BallState.Stopped)
+                 {
+                     newPosition.y = ball.radius;
+
+                     //if ball is rolling, constrain angular velocity to match pure rolling condition
+                     if (state == BallState.Rolling)
+                     {
+                         float y = newAngularVelocity.y;
+                         newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
+                         newAngularVelocity.y = y;
+                     }
+                 }
+
+                 return (newPosition, newOrientation, newVelocity, newAngularVelocity);
+            }
+            private (Vector3, Quaternion, Vector3, Vector3) ExplicitEuler(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //computes the acceleration/angular acceleration based on current state
+                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
+                Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
+                
+                //full step velocity/angular velocity update
+                Vector3 newVelocity = initialVelocity + deltaTime * acceleration;
+                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * angularAcceleration;
+                
+                //full step position/orientation update
+                Vector3 newPosition = initialPosition + deltaTime * newVelocity;
+                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
+                
+                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
+                if (state != BallState.Bouncing && state != BallState.Stopped)
                 {
-                    targetKickTesting = false;
-                    if(barrierShot)
+                    newPosition.y = ball.radius;
+
+                    //if ball is rolling, constrain angular velocity to match pure rolling condition
+                    if (state == BallState.Rolling)
                     {
-                        saveSystem.SaveToJson(fileName, description, startPositions, distances, errors, outliersStartPositions, outliersError, averageComputationTime, iterations, computationTime, constraintErrors, initialSpeeds, zSpin, ySpin);
+                        float y = newAngularVelocity.y;
+                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
+                        newAngularVelocity.y = y;
                     }
-                    else
+                }
+
+                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
+            }
+            private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_2(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //compute slope for velocity and position at the start of the interval
+                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
+                Vector3 k1V = deltaTime * acceleration;
+                Vector3 k1P = deltaTime * initialVelocity;
+                
+                //compute slope for angular velocity and orientation at the start of the interval
+                Vector3 angularAcceleration =  CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
+                Vector3 k1W = deltaTime * angularAcceleration;
+                Vector3 k1T = deltaTime * initialAngularVelocity;
+                
+                //compute slope for velocity and position at midpoint of the interval using k1
+                acceleration = CalculateTotalForces(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ball.mass;
+                Vector3 k2V = deltaTime * acceleration;
+                Vector3 k2P = deltaTime * (initialVelocity + k1V);
+                
+                //compute slope for angular velocity and orientation at midpoint of the interval using k1
+                angularAcceleration = CalculateTotalTorque(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ball.InertialMomentum;
+                Vector3 k2W = deltaTime * angularAcceleration;
+                Vector3 k2T = deltaTime * (initialAngularVelocity + k1W);
+                
+                //update velocity and position using the average of k1 and k2
+                Vector3 newPosition = initialPosition + (k1P + k2P) / 2;
+                Vector3 newVelocity = initialVelocity + (k1V + k2V) / 2;
+                
+                //update angular velocity and orientation using the average of k1 and k2
+                Vector3 newAngularVelocity = initialAngularVelocity + (k1W + k2W) / 2;
+                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + k2T) / 2) * initialOrientation;
+
+                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
+                if (state != BallState.Bouncing && state != BallState.Stopped)
+                {
+                    newPosition.y = ball.radius;
+
+                    //if ball is rolling, constrain angular velocity to match pure rolling condition
+                    if (state == BallState.Rolling)
                     {
-                        saveSystem.SaveToJson(fileName, description, startPositions, distances, errors, outliersStartPositions, outliersError, averageComputationTime, iterations, computationTime);
+                        float y = newAngularVelocity.y;
+                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
+                        newAngularVelocity.y = y;
+                        newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
+                    }
+                }
+
+                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
+            }
+            private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_4(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //compute slope for velocity and position at the start of the interval
+                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
+                Vector3 k1V = deltaTime * acceleration;
+                Vector3 k1P = deltaTime * initialVelocity;
+                
+                //compute slope for angular velocity and orientation at the start of the interval
+                Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
+                Vector3 k1W = deltaTime * angularAcceleration;
+                Vector3 k1T = deltaTime * initialAngularVelocity;
+                
+                //compute slope for velocity and position at midpoint of the interval using k1
+                acceleration = CalculateTotalForces(initialVelocity + k1V / 2, initialAngularVelocity + k1W / 2, state) / ball.mass;
+                Vector3 k2V = deltaTime * acceleration;
+                Vector3 k2P = deltaTime * (initialVelocity + k1V/2);
+                
+                //compute slope for angular velocity and orientation at midpoint of the interval using k1
+                angularAcceleration = CalculateTotalTorque(initialVelocity + k1V/2, initialAngularVelocity + k1W/2, state) / ball.InertialMomentum;
+                Vector3 k2W = deltaTime * angularAcceleration;
+                Vector3 k2T = deltaTime * (initialAngularVelocity + k1W/2);
+                
+                //compute slope for velocity and position at midpoint of the interval using k2
+                acceleration = CalculateTotalForces(initialVelocity + k2V / 2, initialAngularVelocity + k2W / 2, state) / ball.mass;
+                Vector3 k3V = deltaTime * acceleration;
+                Vector3 k3P = deltaTime * (initialVelocity + k2V/2);
+                
+                //compute slope for angular velocity and orientation at midpoint of the interval using k2
+                angularAcceleration = CalculateTotalTorque(initialVelocity + k2V/2, initialAngularVelocity + k2W/2, state) / ball.InertialMomentum;
+                Vector3 k3W = deltaTime * angularAcceleration;
+                Vector3 k3T = deltaTime * (initialAngularVelocity + k2W/2);
+                
+                //compute slope for velocity and position at the end of the interval using k3
+                acceleration = CalculateTotalForces(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ball.mass;
+                Vector3 k4V = deltaTime * acceleration;
+                Vector3 k4P = deltaTime * (initialVelocity + k3V);
+                
+                //compute slope for angular velocity and orientation at the end of the interval using k3
+                angularAcceleration = CalculateTotalTorque(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ball.InertialMomentum;
+                Vector3 k4W = deltaTime * angularAcceleration;
+                Vector3 k4T = deltaTime * (initialAngularVelocity + k3W);
+                
+                //update velocity and position using the weighted average of k1, k2, k3 and k4
+                Vector3 newPosition = initialPosition + (k1P + 2*k2P + 2*k3P + k4P) / 6;
+                Vector3 newVelocity = initialVelocity + (k1V + 2*k2V + 2*k3V + k4V) / 6;
+                
+                //update angular velocity and orientation using the weighted average of k1, k2, k3 and k4
+                Vector3 newAngularVelocity = initialAngularVelocity + (k1W + 2*k2W + 2*k3W + k4W) / 6;
+                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + 2*k2T + 2*k3T + k4T) / 6) * initialOrientation;
+                
+                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
+                if (state != BallState.Bouncing && state != BallState.Stopped)
+                {
+                    newPosition.y = ball.radius;
+
+                    //if ball is rolling, constrain angular velocity to match pure rolling condition
+                    if (state == BallState.Rolling)
+                    {
+                        float y = newAngularVelocity.y;
+                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
+                        newAngularVelocity.y = y;
+                        newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
                     }
                 }
                 
-                ballValues.position = transform.position;
-                ballValues.rotation = Quaternion.identity;
-                ballValues.state = BallState.Bouncing;
+                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
             }
+            
+            private enum IntegrationMethod
+            {
+                VelocityVerlet,
+                ExplicitEuler,
+                Rk2,
+                Rk4
+            }
+
+        #endregion
+        
+        #region Collision Handling
+        
+            //this function handles the collision with the ground and returns the new state of the ball after the collision
+            private (Vector3, Quaternion, Vector3, Vector3, BallState) HandleGroundCollisionAndBounce(float deltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //finds moment of collision
+                float collisionDeltaTime = BinarySearchCollisionDetection(deltaTime / 2, deltaTime / 2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                
+                //updates position, orientation, velocity and angular velocity after the collision
+                (Vector3 positionAfterCollision, Quaternion orientationAfterCollision, Vector3 velocityAfterCollision, Vector3 angularVelocityAfterCollision) = ComputePostCollisionVelocities(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                
+                //sets the new state to sliding if the vertical component of the velocity is small enough
+                if (velocityAfterCollision.y < 1e-1)
+                {
+                    velocityAfterCollision.y = 0f;
+                    positionAfterCollision.y = ball.radius;
+                    state = BallState.Sliding;
+                }
+                
+                return (positionAfterCollision, orientationAfterCollision, velocityAfterCollision, angularVelocityAfterCollision, state);
+            }
+            
+            //this method is called recursively to binary search the moment of collision with the ground
+            private float BinarySearchCollisionDetection(float deltaTime, float step, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //integrate the motion with the current iteration delta time
+                (Vector3 integratedPosition, _, _, _) = IntegrateMotion(deltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                
+                //the new delta time is determined based on whether the ball collides with the ground or not given the current collision delta time guess
+                //if the ball has collided, then the new delta time needs to go back of half the current step, otherwise it has to go further of half step
+                float newDeltaTime = integratedPosition.y - ball.radius < 0f ? deltaTime - step / 2 : deltaTime + step / 2;
+                
+                //if the current delta time step is small enough it means a good guess of the exact moment of collision was obtained
+                if (step < BinarySearchThreshold)
+                    return newDeltaTime;
+                
+                //otherwise a recursive call with the new guess of the delta time and the halved step is made
+                return BinarySearchCollisionDetection(newDeltaTime, step/2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+            }
+            private (Vector3, Quaternion, Vector3, Vector3) ComputePostCollisionVelocities(float collisionDeltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                //here the movement is integrated until the moment the ball collides with the ground
+                (Vector3 collisionPoint, Quaternion collisionOrientation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+
+                Vector3 velocityAfterCollision = new Vector3();
+                Vector3 angularVelocityAfterCollision = new Vector3();
+                
+                //the new velocity after the collision is computed
+                velocityAfterCollision.x = velocityBeforeCollision.x * (1 - ball.inertialMomentumConstant * ball.coefficientOfHorizontalRestitution)  / (ball.inertialMomentumConstant + 1) - ball.inertialMomentumConstant * (1 + ball.coefficientOfHorizontalRestitution) / (ball.inertialMomentumConstant + 1) * ball.radius * angularVelocityBeforeCollision.z;
+                velocityAfterCollision.y = -ball.coefficientOfVerticalRestitution * velocityBeforeCollision.y;
+                velocityAfterCollision.z = velocityBeforeCollision.z * (1 - ball.inertialMomentumConstant * ball.coefficientOfHorizontalRestitution) / (ball.inertialMomentumConstant + 1) + ball.inertialMomentumConstant * (1 + ball.coefficientOfHorizontalRestitution) / (ball.inertialMomentumConstant + 1) * ball.radius * angularVelocityBeforeCollision.x;
+
+                //the new angular velocity after the collision is computed
+                angularVelocityAfterCollision.x = (ball.inertialMomentumConstant-ball.coefficientOfHorizontalRestitution)/(ball.inertialMomentumConstant+1) * angularVelocityBeforeCollision.x + (ball.coefficientOfHorizontalRestitution+1)/(ball.inertialMomentumConstant+1) * velocityBeforeCollision.z/ball.radius;
+                angularVelocityAfterCollision.y = angularVelocityBeforeCollision.y * ball.coefficientOfVerticalAxisSpinRestitution;
+                angularVelocityAfterCollision.z = (ball.inertialMomentumConstant-ball.coefficientOfHorizontalRestitution)/(ball.inertialMomentumConstant+1) * angularVelocityBeforeCollision.z - (ball.coefficientOfHorizontalRestitution+1)/(ball.inertialMomentumConstant+1) * velocityBeforeCollision.x/ball.radius;
+                
+                //calculate the remaining time until the end of the frame and the  is integrated using it
+                float remainingTime = Time.fixedDeltaTime - collisionDeltaTime;
+                return IntegrateMotion(remainingTime, collisionPoint, collisionOrientation, velocityAfterCollision, angularVelocityAfterCollision, state);
+            }
+            
+        #endregion
+        
+        #region Forces And Torques
+            
+            //this method computes the force caused by the air resistance
+            private Vector3 ComputeAirResistanceForce(Vector3 velocity, Vector3 angularVelocity)
+            {
+                // this part computes the drag force based on the paper "Flight and bounce of spinning sports balls"
+                if(!ball.useConstantDragCoefficient)
+                {
+                    //spin rate parameter, how strong the spin is compared to the speed
+                    float s = angularVelocity.magnitude * ball.radius / velocity.magnitude;
+                    
+                    //current speed Reynolds number
+                    float re = velocity.magnitude * 2*ball.radius / kinematicViscosityOfAir;
+                    
+                    //the point where the drag coefficient starts dropping
+                    float reC = ball.speedOfTransitionFromLaminarToTurbulentDrag * 2*ball.radius / kinematicViscosityOfAir;
+                    
+                    //controls how fast the drag coefficient drops around Rec
+                    float reS = ball.dragTransitionSlope * 2*ball.radius / kinematicViscosityOfAir;
+
+                    //if the ball is spinning fast enough and moving faster than critical speed
+                    //use the formula where drag decreases with spin rate
+                    if (velocity.magnitude > ball.speedOfTransitionFromLaminarToTurbulentDrag && s > 0.05f)
+                        //TODO explain values
+                        ball.dragCoefficient = 0.4127f * Mathf.Pow(s, 0.3056f);
+                    //otherwise use the drag coefficient model depending on Reynolds numbers
+                    else
+                        //TODO explain values
+                        ball.dragCoefficient = 0.155f + 0.346f / (1 + Mathf.Exp((re - reC) / reS));
+                }
+                //otherwise use constant linear drag coefficient
+                else
+                {
+                    ball.dragCoefficient = ball.constantDragCoefficient;
+                }
+                
+                //formula
+                return - 0.5f * airDensity * ball.dragCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * velocity.magnitude * velocity;
+            }
+            
+            //this method computes the magnus force given the velocity and the angular velocity
+            private Vector3 ComputeMagnusForce(Vector3 velocity, Vector3 angularVelocity)
+            {
+                return airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 3) * Vector3.Cross(angularVelocity, velocity);
+            }
+            
+            //this method computes the normal force
+            private Vector3 CalculateNormalForce(Vector3 velocity, Vector3 angularVelocity)
+            {
+                //takes into account the vertical component of the magnus force
+                return (Gravity * ball.mass - ComputeMagnusForce(velocity, angularVelocity).y) * Vector3.up;
+            }
+            
+            //this method computes this friction force with the ground, given the velocity, the angular velocity and the current state of the ball
+            private Vector3 CalculateFrictionForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            {
+                Vector3 frictionForce;
+                
+                //if the ball is sliding, use the sliding friction formula
+                if(state == BallState.Sliding)
+                {
+                    //compute direction of the velocity of the contact point
+                    Vector3 direction = (velocity - Vector3.Cross(angularVelocity * ball.radius, Vector3.up)).normalized;
+                    
+                    frictionForce = -ball.mass * Gravity * ball.coefficientOfSlidingFriction * direction;
+                }
+                //otherwise, rolling friction formula
+                else
+                {
+                    frictionForce = -ball.coefficientOfRollingFriction * ball.mass * Gravity * velocity.normalized;
+                }
+                
+                frictionForce.y = 0;
+                return frictionForce;
+            }
+            
+            //this method computes the result of the sum of all forces acting on the ball
+            private Vector3 CalculateTotalForces(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            {
+                Vector3 gravitationalForce = Gravity * ball.mass * Vector3.down;
+                Vector3 dragForce = ComputeAirResistanceForce(velocity, angularVelocity);
+                Vector3 magnusForce = ComputeMagnusForce(velocity, angularVelocity);
+                Vector3 normalForce = state == BallState.Bouncing ? Vector3.zero : CalculateNormalForce(ball.velocity, ball.angularVelocity);
+                Vector3 frictionForce = state == BallState.Bouncing ? Vector3.zero : CalculateFrictionForce(velocity, angularVelocity, state);
+                
+                //sum all forces
+                Vector3 totalForces = gravitationalForce + dragForce + magnusForce + normalForce + frictionForce;
+
+                return totalForces;
+            }
+            
+            //this method computes the torque acting on the ball created by the friction with the ground, given velocity, angular velocity and the state of the ball
+            private Vector3 CalculateFrictionTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            { 
+                //component of the friction around y-axis to simulate the reduction of rotation around the vertical axis
+                Vector3 frictionTorque = new Vector3(0, - ball.mass * Gravity * ball.coefficientOfVerticalAxisSpinningFriction * angularVelocity.y, 0) * ball.InertialMomentum;
+                
+                //if the ball is rolling, the contact point is not moving with respect to the ground, therefore the is no other friction component acting on the ball
+                if (state == BallState.Rolling)
+                    return frictionTorque;
+                
+                //computes direction of the friction torque vector
+                Vector3 direction = -(angularVelocity + Vector3.Cross(velocity, Vector3.up) / ball.radius).normalized;
+                
+                Vector3 angularAcceleration =  ball.mass * ball.coefficientOfSlidingFriction * Gravity * ball.radius / ball.InertialMomentum * direction;
+
+                frictionTorque += angularAcceleration * ball.InertialMomentum;
+                
+                return frictionTorque;
+            }
+            
+            //this method computes the result of the sum of all torques acting on the ball
+            private Vector3 CalculateTotalTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            {
+                Vector3 frictionTorque = state == BallState.Bouncing ? Vector3.zero : CalculateFrictionTorque(velocity, angularVelocity, state);
+                Vector3 totalTorque = frictionTorque;
+                
+                return totalTorque;
+            }
+            
+        #endregion
+    
+    #endregion
+    
+    #region Trajectory Prediction
+    
+        //This method computes the optimal velocity for the ball to reach a target, given the initial ball position, initial speed(velocity magnitude) and initial spin.
+        //Moreover, minVerticalAngle and maxVerticalAngle are used if we want the angle of the velocity over horizontal plane to be clamped between the two values. 
+        //constraintShot is only set true when the function is being called in the constraint shot function. This prevents the Debug.Logs to be printed.
+        //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
+        private (Vector3, Vector3) FindOptimalVelocityForTargetHitGivenInitialSpeedAndSpin(float deltaTime, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
+        { 
+            float startTime = Time.realtimeSinceStartup;
+            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
+            
+            //initial velocity direction guess is toward the target and angle over horizontal plane is the average between minVerticalAngle and maxVerticalAngle
+            Vector3 direction = new Vector3(targetPosition.x - initialPosition.x, 0, targetPosition.z - initialPosition.z).normalized;
+            direction = new Vector3(direction.x * Mathf.Cos((maxVerticalAngle - (maxVerticalAngle - minVerticalAngle) / 2) * Mathf.Deg2Rad), Mathf.Sin((maxVerticalAngle - (maxVerticalAngle - minVerticalAngle) / 2) * Mathf.Deg2Rad), direction.z * Mathf.Cos((maxVerticalAngle - (maxVerticalAngle - minVerticalAngle) / 2) * Mathf.Deg2Rad));
+            Vector3 bestVelocityEstimation = direction * speed;
+            
+            //align spin with the velocity
+            Vector3 alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
+
+            //instantiate iteration counter, error and rotation quaternion
+            int iterationCounter = 0;
+            float error = float.MaxValue;
+            Vector3 currentVelocityEstimation = bestVelocityEstimation;
+            
+            //vector that points from the initial position to the target position
+            Vector3 vTarget = (targetPosition - initialPosition).normalized;
+            
+            //initialize randomizer
+            Random randomizer = new Random(180300);
+            
+            //keeps iterating until either the error gets smaller than the maximum tolerated error or when the iteration counter reaches the maximum
+            while (error > targetMaximumErrorCurve.Evaluate(distanceFromTarget) * 1e-3f && iterationCounter < maximumIterations)
+            {
+                iterationCounter++;
+                
+                //align spin with the velocity
+                alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
+                
+                //compute the closest point to the target with current rotation
+                _currentTrajectory = new List<Vector3>();
+                (Vector3 predictedPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, currentVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                closestPointToTargetPlaceholder.transform.position = predictedPosition;
+                
+                //check angle from horizontal plane
+                float upDot = Vector3.Dot(currentVelocityEstimation.normalized, Vector3.up);
+                float angleFromHorizontalPlane = 90f - Mathf.Acos(upDot) * Mathf.Rad2Deg;
+
+                float newError = Vector3.Distance(predictedPosition, targetPosition);
+                
+                //if the angle from horizontal plane is between the minimum and maximum limits, a new iteration will be computed
+                if (angleFromHorizontalPlane < maxVerticalAngle && angleFromHorizontalPlane > minVerticalAngle)
+                {
+                    //if the error doesn't improve, stop the simulation
+                    if (Mathf.Abs(error - newError) < 1e-3)
+                        break;
+                    
+                    //new velocity estimation is set equal to the rotated velocity
+                    bestVelocityEstimation = currentVelocityEstimation;
+                    
+                    //error is updated
+                    error = newError;
+
+                    //compute new velocity estimation, rotating the previous best estimation in the target direction
+                    currentVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, vTarget, bestVelocityEstimation, error, targetMaximumErrorCurve.Evaluate(distanceFromTarget) * 1e-3f, randomizer);
+
+                    if (!constraintShot)
+                        _precalculationTrajectories.Add(_currentTrajectory);
+                }
+                
+                //if the angle from horizontal plane is not between the minimum and maximum limits, it means that the predictor can't make a better guess to reach the target and the angle from the horizontal plane will be clamped to either the minimum or the maximum possible value
+                else
+                {
+                    float velocityMagnitude = currentVelocityEstimation.magnitude;
+                    
+                    //compute projection of the rotated velocity on the horizontal plane
+                    Vector2 xzProjection = new Vector2(currentVelocityEstimation.x, currentVelocityEstimation.z);
+                    float xzMagnitude = xzProjection.magnitude;
+
+                    //find the new y value in order to have the angle from the horizontal plane either equal to minimum vertical angle or maximum vertical angle
+                    float newY = angleFromHorizontalPlane > maxVerticalAngle ? Mathf.Tan(maxVerticalAngle * Mathf.Deg2Rad) * xzMagnitude : Mathf.Tan(minVerticalAngle * Mathf.Deg2Rad) * xzMagnitude;
+                    bestVelocityEstimation = new Vector3(currentVelocityEstimation.x, newY, currentVelocityEstimation.z).normalized * velocityMagnitude;
+                    
+                    //align spin with the velocity
+                    alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
+
+                    //compute the closest point to the target with current rotation
+                    _currentTrajectory = new List<Vector3>();
+                    (predictedPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                    closestPointToTargetPlaceholder.transform.position = predictedPosition;
+                    
+                    //the error between the estimated position and the actual target position is computed
+                    error = Vector3.Distance(predictedPosition, targetPosition);
+
+                    if(!constraintShot)
+                        _precalculationTrajectories.Add(_currentTrajectory);
+                    
+                    //the cycle is interrupted because the prediction can't reach a better solution since the angle would be outside the limits
+                    break;
+                }
+            }
+            
+            float endTime = Time.realtimeSinceStartup;
+            
+            if(!constraintShot)
+            {
+                //debugging results
+                float computationTimeInMilliseconds = (endTime - startTime) * 1e3f;
+                    
+                Debug.Log("Prediction duration: " + computationTimeInMilliseconds.ToString("F3") + " ms with " + iterationCounter + " iterations");
+                Debug.Log("Error: " + (error * 1e3).ToString("F3") + " mm");
+
+                //saving the data for the test
+                if (testing)
+                {
+                    _testData.errors.Add(error*1e3f);
+                    _testData.distances.Add(distanceFromTarget);
+                    _testData.iterations.Add(iterationCounter);
+                    _testData.initialSpeeds.Add(speed);
+                    _testData.constraintErrors.Add(Mathf.Abs(-1));
+                    _testData.zSpin.Add(spin.z);
+                    _testData.ySpin.Add(spin.y);
+                    _testData.computationTime.Add(computationTimeInMilliseconds);
+                }
+            }
+
+            return (bestVelocityEstimation, alignedSpin);
         }
         
+        //This method computes the optimal velocity and spin for the ball to reach a target, passing through a given constraint(if possible) given the initial ball position and initial speed(velocity magnitude).
+        //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
+        private (Vector3, Vector3)  FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(float deltaTime, Vector3 targetPosition, Vector3 constraintPosition, Vector3 initialPosition, float speed, int maximumIterations, bool testing = false)
+        { 
+            float startTime = Time.realtimeSinceStartup;
+            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
+            int iterationCounter = 0;
+
+            //this rotation is needed to have the displacement of the shot in the coordinate system of the XY plane
+            //in this way the displacement can be computed from any direction
+            Quaternion displacementXYPlaneRot = Quaternion.FromToRotation(new Vector3(initialPosition.x - targetPosition.x, 0, initialPosition.z - targetPosition.z), Vector3.left);
+            
+            //first velocity guess, pointing from the initial position to the constraint with no spin
+            _currentTrajectory = new List<Vector3>();
+            Vector3 bestEstimatedVelocity = (constraintPosition - initialPosition).normalized * speed;
+            
+            (Vector3 noSpinPredictedTargetPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestEstimatedVelocity, Vector3.zero, targetPosition, true, constraintPosition);
+
+            //finds displacement of the previous shot from the target
+            Vector3 targetDisplacement = displacementXYPlaneRot * (noSpinPredictedTargetPosition - targetPosition).normalized;
+            
+            //sets both horizontal and vertical spin magnitude to the possible maximum values
+            float horizontalSpinMagnitude = ball.maximumSpinValue;
+            float verticalSpinMagnitude = ball.maximumSpinValue;
+            
+            //choose the direction of the spin based on the sign of the displacement from the target of the previous shot and set the magnitude to the maximum possible value
+            Vector3 spin = new Vector3(0, Math.Sign(targetDisplacement.z) * horizontalSpinMagnitude, -Math.Sign(targetDisplacement.y) * verticalSpinMagnitude);
+            
+            //align spin with the velocity
+            Vector3 bestEstimatedSpin = AlignSpinWithVelocityDirection(bestEstimatedVelocity, spin);
+            
+            //compute the trajectory with maximum spin and save the closest target position and closest constraint position
+            (Vector3 bestSpinPredictedTargetPosition,Vector3 bestSpinPredictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestEstimatedVelocity, bestEstimatedSpin, targetPosition, true, constraintPosition);
+            
+            //find target error and constraint error of the trajectory
+            float targetError = (bestSpinPredictedTargetPosition - targetPosition).magnitude;
+            float constraintError = (bestSpinPredictedConstraintPosition - constraintPosition).magnitude;
+
+            //vector that points from the initial position to the constraint position
+            Vector3 vConstraint = (constraintPosition - initialPosition).normalized;
+
+            float previousTargetError = float.PositiveInfinity;
+            
+            //the cycle stops when either the iteration counter reaches the maximum or when both the target and the constraint errors are below their maximum value
+            while (iterationCounter < maximumIterations && (targetError > targetMaximumErrorCurve.Evaluate(distanceFromTarget) * 1e-3f || constraintError > constraintMaximumError))
+            {
+                iterationCounter++;
+                _currentTrajectory = new List<Vector3>();
+                
+                //HORIZONTAL//
+                
+                //computes trajectory having no horizontal spin component
+                Vector3 noHorizontalSpin = bestEstimatedSpin;
+                noHorizontalSpin.y = 0f;
+                (Vector3 noHorizontalSpinPredictedTargetPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestEstimatedVelocity, noHorizontalSpin, targetPosition, true, constraintPosition);
+                //compute the target displacement of the shot without horizontal spin
+                targetDisplacement = displacementXYPlaneRot * (noHorizontalSpinPredictedTargetPosition - targetPosition).normalized;
+                
+                //finds the new horizontal spin proportionally to the displacement of the predicted target of the shot with no horizontal spin from both the actual target position and the predicted position of the previous best found spin
+                float d1 = Mathf.Abs((displacementXYPlaneRot * (bestSpinPredictedTargetPosition - noHorizontalSpinPredictedTargetPosition)).z);
+                float d2 = Mathf.Abs((displacementXYPlaneRot * (targetPosition - noHorizontalSpinPredictedTargetPosition)).z); 
+                horizontalSpinMagnitude = Mathf.Min(horizontalSpinMagnitude * d2 / d1, ball.maximumSpinValue);
+                spin.y = Math.Sign(targetDisplacement.z) * horizontalSpinMagnitude;
+                Vector3 newEstimatedSpin = bestEstimatedSpin;
+                newEstimatedSpin.y = spin.y;
+                
+                //compute trajectory with the new-found horizontal spin and align spin with the velocity
+                (_, Vector3 predictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestEstimatedVelocity, newEstimatedSpin, targetPosition, true, constraintPosition);
+                Vector3 newEstimatedVelocity = RotateVelocityTowardConstraint(initialPosition, predictedConstraintPosition, vConstraint, bestEstimatedVelocity);
+                newEstimatedSpin = AlignSpinWithVelocityDirection(newEstimatedVelocity, spin);
+
+                //compute new trajectory to find new predicted target position
+                (bestSpinPredictedTargetPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, newEstimatedVelocity, newEstimatedSpin, targetPosition, true, constraintPosition);
+                
+                //VERTICAL//
+                
+                //computes trajectory having no vertical spin component
+                Vector3 noVerticalSpin = spin;
+                noVerticalSpin.z = 0f;
+                (Vector3 noVerticalSpinPredictedTargetPosition,_) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, newEstimatedVelocity, noVerticalSpin, targetPosition, true, constraintPosition);
+
+                //compute the target displacement of the shot without vertical spin
+                targetDisplacement = displacementXYPlaneRot * (noVerticalSpinPredictedTargetPosition - targetPosition).normalized;
+
+                //finds the new vertical spin proportionally to the displacement of the predicted target of the shot with no vertical spin from both the actual target position and the predicted position of the previous best found spin
+                d1 = bestSpinPredictedTargetPosition.y - noVerticalSpinPredictedTargetPosition.y;
+                d2 = targetPosition.y - noVerticalSpinPredictedTargetPosition.y;
+                verticalSpinMagnitude = Mathf.Min(verticalSpinMagnitude * Math.Abs(d2 / d1), ball.maximumSpinValue);
+                spin.z = -Math.Sign(targetDisplacement.y) * verticalSpinMagnitude;
+                newEstimatedSpin = AlignSpinWithVelocityDirection(newEstimatedVelocity, spin);
+                
+                //computes trajectory with the new-found vertical spin and align spin with the velocity
+                (_, predictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, newEstimatedVelocity, newEstimatedSpin, targetPosition, true, constraintPosition);
+                
+                newEstimatedVelocity = RotateVelocityTowardConstraint(initialPosition, predictedConstraintPosition, vConstraint, newEstimatedVelocity);
+                newEstimatedSpin = AlignSpinWithVelocityDirection(newEstimatedVelocity, spin);
+                
+                //compute new trajectory to find new predicted target position
+                _currentTrajectory = new List<Vector3>();
+                (bestSpinPredictedTargetPosition,bestSpinPredictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, newEstimatedVelocity, newEstimatedSpin, targetPosition, true, constraintPosition);
+                
+                _precalculationTrajectories.Add(_currentTrajectory);
+                
+                //finds distance from target and from constraint of the trajectory
+                targetError = (bestSpinPredictedTargetPosition - targetPosition).magnitude;
+                constraintError = (bestSpinPredictedConstraintPosition - constraintPosition).magnitude;
+                
+                
+                //if the target error doesn't improve because the maximum possible spin for one of the two components reaches the maximum value, then the prediction is interrupted
+                if ((Mathf.Abs(targetError - previousTargetError ) < 1e-5 || targetError > previousTargetError) && (Mathf.Abs(spin.y) - ball.maximumSpinValue < 1e-6f || Mathf.Abs(spin.z) - ball.maximumSpinValue < 1e-6f))
+                {
+                    iterationCounter++;
+                        
+                    //use the predictor with no constraint with the found spin to have the trajectory prioritizing the target but passing in the closest possible point to the constraint
+                    (newEstimatedVelocity, newEstimatedSpin) = FindOptimalVelocityForTargetHitGivenInitialSpeedAndSpin(deltaTime, targetPosition, initialPosition, speed, spin, 0, 30, 10, true, constraintPosition);
+                   
+                    //compute trajectory with the new-found best estimated velocity and spin
+                    _currentTrajectory = new List<Vector3>();
+                    (bestSpinPredictedTargetPosition,bestSpinPredictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, newEstimatedVelocity, newEstimatedSpin, targetPosition, true, constraintPosition);
+                    _precalculationTrajectories.Add(_currentTrajectory);
+                
+                    //finds distance from target and from constraint of the trajectory
+                    targetError = (bestSpinPredictedTargetPosition - targetPosition).magnitude;
+                    constraintError = (bestSpinPredictedConstraintPosition - constraintPosition).magnitude;
+
+                    //update best velocity estimation and best spin estimation
+                    bestEstimatedVelocity = newEstimatedVelocity;
+                    bestEstimatedSpin = newEstimatedSpin;
+                    
+                    break;
+                }
+                
+                //update best velocity estimation
+                bestEstimatedVelocity = newEstimatedVelocity;
+                bestEstimatedSpin = newEstimatedSpin;
+                
+                //update previous error
+                previousTargetError = targetError;
+            }
+            
+            float endTime = Time.realtimeSinceStartup;
+            float computationTimeInMilliseconds = (endTime - startTime)  * 1e3f;
+            
+            //debugging predicted position
+            _currentTrajectory = new List<Vector3>();
+            (bestSpinPredictedTargetPosition,bestSpinPredictedConstraintPosition) = ComputeTrajectoryPathToTarget(deltaTime, initialPosition, Quaternion.identity, bestEstimatedVelocity, bestEstimatedSpin, targetPosition, true, constraintPosition);
+            closestPointToTargetPlaceholder.transform.position = bestSpinPredictedTargetPosition;
+            closestPointToConstraintPlaceholder.transform.position = bestSpinPredictedConstraintPosition;
+            
+            Debug.Log("Constrained kick prediction duration: " + computationTimeInMilliseconds.ToString("F3") + " ms with " + iterationCounter + " iterations");
+            Debug.Log("Constraint error: " + (constraintError*1e3f).ToString("F3") + " mm");
+            Debug.Log("Target error: " + (targetError*1e3f).ToString("F3") + " mm");
+            
+            //saving the data for the test
+            if (testing)
+            {
+                _testData.errors.Add(targetError*1e3f);
+                _testData.distances.Add(Vector3.Distance(initialPosition, targetPosition));
+                _testData.iterations.Add(iterationCounter);
+                _testData.initialSpeeds.Add(speed);
+                _testData.constraintErrors.Add(Mathf.Abs(constraintError*1e3f));
+                _testData.zSpin.Add(spin.z);
+                _testData.ySpin.Add(spin.y);
+                _testData.computationTime.Add(computationTimeInMilliseconds);
+            }
+            
+            return (bestEstimatedVelocity,bestEstimatedSpin);
+        }
         
-    }
+        //given the initial conditions of the ball, the method will compute the trajectory from the initialPosition until the closest position to the target
+        //the method returns the closest point of the trajectory to the target and the closest point to the constraint
+        private (Vector3,Vector3) ComputeTrajectoryPathToTarget(float deltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity,  Vector3 initialAngularVelocity, Vector3 targetPosition, bool constraintShot, Vector3 constraintPosition = default)
+        {
+            float startTime = Time.realtimeSinceStartup;
+
+            int iterations = 0;
+            
+            bool stopSimulation = false;
+            bool foundClosestConstraintPoint = false;
+
+            //initialize useful state variables
+            //previous state variables are needed to go back in time when the ball passes to the closest point 
+            Vector3 currentPosition = initialPosition;
+            Vector3 previousPosition = initialPosition;
+            Quaternion currentOrientation = initialOrientation;
+            Quaternion previousOrientation = initialOrientation;
+            Vector3 currentVelocity = initialVelocity;
+            Vector3 previousVelocity = initialVelocity;
+            Vector3 currentAngularVelocity = initialAngularVelocity;
+            Vector3 previousAngularVelocity = initialAngularVelocity;
+
+            Vector3 targetClosestPoint = currentPosition;
+            Vector3 constraintClosestPoint = currentPosition;
+            
+            float previousTargetError = Vector3.Distance(currentPosition, targetPosition);
+            float previousConstraintError = Vector3.Distance(currentPosition, constraintPosition);
+            while(!stopSimulation)
+            {
+                iterations++;
+                
+                //integrate the next step on the motion
+                (Vector3 newPosition, Quaternion newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, currentPosition,  currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing);
+                _currentTrajectory.Add(newPosition);
+                
+                //compute the new distance from the target
+                float targetError = Vector3.Distance(currentPosition, targetPosition);
+                float newTargetError = Vector3.Distance(newPosition, targetPosition);
+                
+                //if the error at frame n is < than the error at frame n-1 and < than the error at frame n+1, then the closest point is between n-1 and n+1
+                if (targetError <= previousTargetError && targetError <= newTargetError)
+                {
+                    stopSimulation = true;
+                    
+                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                    targetClosestPoint = previousTargetError <= newTargetError 
+                        ? BinarySearchClosestPoint(deltaTime / 2, deltaTime / 4, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, targetPosition)
+                        : BinarySearchClosestPoint(deltaTime / 2, deltaTime / 4, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, targetPosition);
+                }
+
+                //update previous error
+                previousTargetError = targetError;
+
+                //in case of shot with constraint find the closest point of trajectory to the constraint
+                if(constraintShot && !foundClosestConstraintPoint)
+                {
+                    //compute the new distance from the target
+                    float constraintError = Vector3.Distance(currentPosition, constraintPosition);
+                    float newConstraintError = Vector3.Distance(newPosition, constraintPosition);
 
 
-    void FixedUpdate()
-    {
+                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                    if (constraintError <= previousConstraintError && constraintError <= newConstraintError)
+                    {
+                        
+                        //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                        constraintClosestPoint = previousConstraintError <= newConstraintError
+                            ? BinarySearchClosestPoint(deltaTime / 2, deltaTime / 4, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, constraintPosition)
+                            : BinarySearchClosestPoint(deltaTime / 2, deltaTime / 4, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, constraintPosition);
+                        
+                        foundClosestConstraintPoint = true;
+                    }
+
+                    //update previous constraint error
+                    previousConstraintError = constraintError;
+                }
+                
+                //update previous state variables
+                previousPosition = currentPosition;
+                previousVelocity = currentVelocity;
+                previousAngularVelocity = currentAngularVelocity;
+                previousOrientation = currentOrientation;
+                
+                //update current state variables
+                currentVelocity = newVelocity;
+                currentPosition = newPosition;
+                currentAngularVelocity = newAngularVelocity;
+                currentOrientation = newOrientation;
+            }
+
+            totalIterations += iterations;
+            numberOfTimeTRajWasCalled++;
+            averageIterations = (float)totalIterations / numberOfTimeTRajWasCalled;
+
+            float totalTime = (Time.realtimeSinceStartup - startTime) * 1e3f;
+
+            if(totalTime > 5)
+                Debug.Log("Too much: " + totalTime + "with iterations: " + iterations);
+            return (targetClosestPoint, constraintClosestPoint);
+        }
+        
+    #endregion
+    
+    #region Kick Ball
+        //this method is used to set the velocity and the angular velocity of the ball, given direction, speed and spin tp apply
+        public void Kick(Vector3 direction, float speed, Vector3 spin)
+        {
+            _precalculationTrajectories.Clear();
+                
+            ball.velocity = direction * speed;
+            ball.angularVelocity = AlignSpinWithVelocityDirection(ball.velocity, spin);
+            ball.state = ball.velocity.y > 0 ? BallState.Bouncing : BallState.Sliding;
+                
+            ball.AddTrajectoryFrame();
+        }
+        
+        //this method finds the optimal velocity for the ball to reach the target and sets velocity and angular velocity equal to the found values, given speed and spin
+        public void TargetedKick(float speed, Vector3 spin)
+        {
+            _precalculationTrajectories.Clear();
+            
+            (ball.velocity, ball.angularVelocity) = FindOptimalVelocityForTargetHitGivenInitialSpeedAndSpin(1/framePerSecond, target.transform.position, ball.position, speed, spin, 0, 30, maxIterations);
+            ball.state = BallState.Bouncing;
+                
+            ball.AddTrajectoryFrame();
+        }
+        
+        //this method finds the optimal velocity adn angular velocity for the ball to reach the target passing through a constraint and sets velocity and angular velocity equal to the found values, given speed
+        public void TargetedKickWithConstraint(float speed)
+        {
+            _precalculationTrajectories.Clear();
+            
+            (ball.velocity, ball.angularVelocity) = FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1/framePerSecond, target.transform.position, constraint.transform.position, ball.position, speed, maxIterations);
+            ball.state = BallState.Bouncing;
+
+            ball.AddTrajectoryFrame();
+        }
+        
+    #endregion
+    
+    #region Testing
+        
+        //if no other test is running, starts the coroutine to run a new test
+        public void StartTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin)
+        {
+            if (_testRunning)
+                return;
+
+            _testRunning = true;
+
+            StartCoroutine(RunCoroutineTestForTargetedKick(description, fileName, testSteps, testStartPosition, testEndPosition, speed, spin, target.transform.position));
+        }
+        
+        //method called in the coroutines that runs the test
+        private IEnumerator RunCoroutineTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin, Vector3 targetPosition)
+        {
+            _testData = new TestData();
+            int currentTestStep = 0;
+
+            //each iteration of the cycle the optimal shot from the initial position to the target is computed
+            //at each step the position is moved gradually from the start point to the end point
+            while(currentTestStep < testSteps)
+            {
+                _precalculationTrajectories.Clear();
+                
+                Vector3 stepDirection = (testEndPosition - testStartPosition) / testSteps;
+                Vector3 testCurrentPosition = testStartPosition + stepDirection * currentTestStep;
+                FindOptimalVelocityForTargetHitGivenInitialSpeedAndSpin(1/framePerSecond, targetPosition, testCurrentPosition, speed, spin, 0, 45f, maxIterations, false, default, true);
+
+                currentTestStep++;
+                yield return null;
+            }
+
+            //save test data
+            _testData.description = description;
+            _testData.SaveToJson(fileName);
+            _testRunning = false;
+
+            StartTestForTargetedKick(description, fileName, testSteps, testStartPosition, testEndPosition, speed, spin);
+        }
+
+        //if no other test is running, starts the coroutine to run a new test
+        public void StartTestForTargetedKickWithConstraint(String description, String fileName, int testSteps, float minInitialSpeed, float maxInitialSpeed)
+        {
+            if (_testRunning)
+                return;
+
+            _testRunning = true;
+            StartCoroutine(RunCoroutineTestForTargetedKickWithConstraint(description, fileName, testSteps, minInitialSpeed, maxInitialSpeed, target.transform.position, constraint.transform.position));
+        }
+        
+        //method called in the coroutines that runs the test
+        private IEnumerator RunCoroutineTestForTargetedKickWithConstraint(String description, String fileName, int testSteps, float minInitialSpeed, float maxInitialSpeed, Vector3 targetPosition, Vector3 constraintPosition)
+        {
+            _testData = new TestData();
+            int currentTestStep = 0;
+            Vector3 initialPosition = ball.position;
+            float testInitialSpeed = minInitialSpeed;
+            float speedIncrement = (maxInitialSpeed - minInitialSpeed) / testSteps;
+
+            //each iteration of the cycle the optimal shot from the initial position to the target and the constraint is computed
+            //at each step the speed is increased gradually from the start speed to the end speed
+            while (currentTestStep < testSteps)
+            {
+                _precalculationTrajectories.Clear();
+                testInitialSpeed += speedIncrement;
+                FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1/framePerSecond, targetPosition, constraintPosition, initialPosition, testInitialSpeed, maxIterations, true);
+                
+                currentTestStep++;
+
+                yield return null;
+            }
+
+            //save test data
+            _testData.description = description;
+            _testData.SaveToJson(fileName);
+            _testRunning = false;
+        }
+
+        public void StopTest()
+        {
+            if (!_testRunning)
+                return;
+
+            _testRunning = false;
+            StopAllCoroutines();
+        }
+        
+    #endregion
+    
+    #region Utils
+        
+        //reset ball and trajectory gizmos
+        public void Reset()
+        {
+            _precalculationTrajectories.Clear();
+            ball.Reset();
+        }
+        
+        //this method is used to find the rotation needed for the velocity to have the ball passing through the constraint
+        private Vector3 RotateVelocityTowardConstraint(Vector3 initialPosition, Vector3 predictedConstraintPosition, Vector3 vConstraint, Vector3 velocity)
+        {
+            //first it computes the vector pointing from the initial position of the ball in the kick to the predicted closest position to the target in the trajectory
+            Vector3 vPredictedConstraint = (predictedConstraintPosition - initialPosition).normalized;
+            
+            //then the rotation needed to transform the previously found vector into the vector vConstraint(which points from the initial position to the actual constraint position) is computed
+            Quaternion rotation = Quaternion.FromToRotation(vPredictedConstraint, vConstraint);
+            
+            //the rotation is applied to the velocity
+            Vector3 rotatedVelocity = rotation * velocity;
+           
+            return rotatedVelocity;
+        }
+
+        //this method is similar to the one above but is more accurate, therefore it is used for the adjustment of the trajectory to the target, but it's also less efficient
+        private Vector3 RotateVelocityTowardTarget(Vector3 initialPosition, Vector3 predictedTargetPosition, Vector3 vTarget, Vector3 velocity, float error, float maxError, Random random)
+        {
+            //vIteration points from the initial position to the estimated target position
+            Vector3 vIteration = (predictedTargetPosition - initialPosition).normalized;
+                    
+            //compute the cosine of the angle between vIteration and vTarget
+            float cosTheta = Vector3.Dot(vIteration, vTarget);
+
+            //compute the angle between vIteration and vTarget
+            float theta = Mathf.Acos(Mathf.Clamp(cosTheta, -1f, 1f)) * Mathf.Rad2Deg;
+
+            //if the angle is too small and the error is still above the target maximum error I adjust the velocity estimation magnitude, this prevents to have too many iterations in some cases
+            if (Mathf.Abs(theta) < 1e-3 && error > maxError)
+            {
+                velocity *= random.Next(2) == 0 ? 1.0005f : 0.9995f;
+            }
+                    
+            //compute rotation axis, perpendicular to the plane containing vIteration and vTarget
+            Vector3 rotationAxis = Vector3.Cross(vIteration, vTarget).normalized;
+                    
+            //compute the rotation needed to rotate vIteration to vTarget
+            Quaternion rotation = Quaternion.AngleAxis(theta, rotationAxis);
+
+            //apply rotation to velocity
+            Vector3 rotatedVelocity = rotation * velocity;
+
+            return rotatedVelocity;
+        }
+        
+        //this method finds a rotation that is needed to be applied to the spin in order to make its z component orthogonal to the velocity direction
+        private Vector3 AlignSpinWithVelocityDirection(Vector3 velocity, Vector3 spin)
+        {
+            //find the projection of the direction of the velocity on the xz plane
+            Vector3 targetXZ = new Vector3(velocity.x, 0f, velocity.z).normalized;
+            
+            //find the needed rotation
+            Quaternion targetRotation = Quaternion.Euler(0,-90,0) * Quaternion.LookRotation(targetXZ, Vector3.up);
+            
+            return targetRotation * spin;
+        }
+        
+        //this method calculates the closest position of a ball to a target position
+        //using a recursive binary search to find the time of closest approach
+        private Vector3 BinarySearchClosestPoint(float deltaTime, float step , Vector3 position, Quaternion orientation, Vector3 velocity, Vector3 angularVelocity, BallState state, Vector3 targetPosition)
+        {
+            //calculate position at (deltaTime - step) and get its distance to target
+            (Vector3 pMinus, _, _, _) = IntegrateMotion(deltaTime - step, position, orientation, velocity, angularVelocity, state);
+            float distance1 = Vector3.Distance(pMinus, targetPosition);
+            
+            //calculate position at (deltaTime + step) and get its distance to target
+            (Vector3 pPlus, _, _, _) = IntegrateMotion(deltaTime + step, position, orientation, velocity, angularVelocity, state);
+            float distance2 = Vector3.Distance(pPlus, targetPosition);
+            
+            Vector3 closestPoint;
+            
+            //compare which distance is closer to the target
+            if (distance1 < distance2) 
+            {
+                //if the step size is smaller than the maximum allowed value, the best estimation is found
+                if (step < BinarySearchThreshold)
+                {
+                    float correctDeltaTime = deltaTime - step;
+                    (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
+                }
+                else
+                    //recursively search in the negative direction with half the step size
+                    closestPoint = BinarySearchClosestPoint(deltaTime - step, step/2, position, orientation, velocity, angularVelocity, state, targetPosition);
+            }
+            else
+            {
+                //if the step size is smaller than the maximum allowed value, the best estimation is found
+                if (step < BinarySearchThreshold)
+                {
+                    float correctDeltaTime = deltaTime + step;
+                    (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
+                }
+                else
+                    //recursively search in the negative direction with half the step size
+                    closestPoint = BinarySearchClosestPoint(deltaTime + step, step/2, position, orientation, velocity, angularVelocity, state, targetPosition);
+            }
+
+            return closestPoint;
+        }
+        
         //handles frame by frame mode
-        if (frameByFrame)
+        private void HandleFrameByFrame()
         {
             if (!interpolateFrames)
             {
-                if (frameCount < _frames.Count && _frames.Count > 0)
+                if (FrameCount < ball.Frames.Length && ball.Frames.Length > 0)
                 {
-                    ballValues.position = frameArray[frameCount].position;
-                    ballValues.rotation = frameArray[frameCount].rotation;
+                    ball.position = ball.Frames[FrameCount].Position;
+                    ball.orientation = ball.Frames[FrameCount].Orientation;
                 }
             }
             else
             {
-                int currentIndex = frameCount;
-                int nextIndex = frameCount + 1;
-                
-                float t = Mathf.Clamp01(continuousFrameCount - currentIndex);
+                int currentIndex = FrameCount;
+                int nextIndex = FrameCount + 1;
+                    
+                float t = Mathf.Clamp01(ContinuousFrameCount - currentIndex);
 
-                if (nextIndex > frameArray.Length - 1)
+                if (nextIndex > ball.Frames.Length - 1)
+                {
+                    nextIndex = ball.OldestFrameIndex != 0 ? 0 : currentIndex;
+                }
+
+                if (nextIndex >= ball.NewestFrameIndex && ball.OldestFrameIndex == 0)
                 {
                     nextIndex = currentIndex;
                 }
 
-                Vector3 interpolatedPos = Vector3.Lerp(frameArray[currentIndex].position, frameArray[nextIndex].position, t);
-                Quaternion interpolatedRot = Quaternion.Slerp(frameArray[currentIndex].rotation, frameArray[nextIndex].rotation, t);
+                Vector3 interpolatedPos = Vector3.Lerp(ball.Frames[currentIndex].Position, ball.Frames[nextIndex].Position, t);
+                Quaternion interpolatedRot = Quaternion.Slerp(ball.Frames[currentIndex].Orientation, ball.Frames[nextIndex].Orientation, t);
 
-                ballValues.position = interpolatedPos;
-                ballValues.rotation = interpolatedRot;
-            }
-
-            return;
-        }
-        
-        if (targetKickTesting || ballValues.state == BallState.Stopped)
-            return;
-        
-        //TODO change name of function
-        CheckIsMoving();
-         
-        ComputeFrame(Time.fixedDeltaTime, ballValues);
-
-        AddTrajectoryFrame();
-    }
-
-    public void ComputeFrame(float deltaTime, Ball ball)
-    {
-        float startTime = Time.realtimeSinceStartup;
-        
-        (Vector3 newPosition, Quaternion newRotation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, ball.position, ball.rotation, ball.velocity, ball.angularVelocity, ball.state);
-        
-        //TODO spiegare il nome meglio
-        if (newPosition.y - ballValues.radius <= 0f && ball.state == BallState.Bouncing && newVelocity.y < 0)
-        {
-            (newPosition, newRotation, newVelocity, newAngularVelocity, ball.state) = CheckCollision(deltaTime, ball.position, ball.rotation, ball.velocity, ball.angularVelocity, ball.state);
-        }
-
-        ball.state = CheckPureRolling(ball.state, _frictionForce, _previousSignOfFriction);
-        
-        
-        float endTime = Time.realtimeSinceStartup;
-        _timeToCompute = endTime - startTime;
-        _totalTimeToCompute += _timeToCompute;
-
-        ball.position = newPosition;
-        ball.rotation = newRotation;
-        ball.velocity = newVelocity;
-        ball.angularVelocity = newAngularVelocity;
-    }
-
-    private void AddTrajectoryFrame()
-    {
-        if (ballValues.state != BallState.Stopped && !targetKickTesting)
-        {
-            Frame frame = new Frame(transform.position, transform.rotation, ballValues.position, ballValues.velocity, CalculateTotalForces(ballValues.velocity, ballValues.angularVelocity, ballValues.state)/ballValues.mass, ballValues.angularVelocity, ballValues.CalculatePotentialEnergy(),
-                ballValues.CalculateKineticEnergy(), ballValues.CalculateRotationalEnergy(), ballValues.CalculateTotalEnergy(), CalculateDragForce(ballValues.velocity, ballValues.angularVelocity), CalculateMagnusForce(ballValues.velocity, ballValues.angularVelocity), CalculateNormalForce(ballValues.velocity, ballValues.angularVelocity, ballValues.state),
-                CalculateFrictionForce(ballValues.velocity, ballValues.angularVelocity, ballValues.state), CalculateTotalForces(ballValues.velocity, ballValues.angularVelocity, ballValues.state), CalculateTotalTorque(ballValues.velocity, ballValues.angularVelocity, ballValues.state), CalculateTotalTorque(ballValues.velocity, ballValues.angularVelocity, ballValues.state), _timeToCompute);
-            
-            if (_frames.Count >= 1000)
-            {
-                _frames.Dequeue(); 
-            }
-
-            _frames.Enqueue(frame);
-            frameArray = _frames.ToArray();
-            
-            GetComponent<TrajectoryTracker>().AddPoint(transform.position, ballValues.state == BallState.Rolling ? Color.green : Color.red);
-        }
-    }
-
-    private (Vector3, Quaternion, Vector3, Vector3) IntegrateMotion(float deltaTime, Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        switch (integrationMethod)
-        {
-            case IntegrationMethod.VelocityVerlet:
-                return VelocityVerlet(deltaTime, initialPosition, initialRotation, initialVelocity,initialAngularVelocity, state);
-            case IntegrationMethod.ExplicitEuler:
-                return ExplicitEuler(deltaTime, initialPosition, initialRotation, initialVelocity,initialAngularVelocity, state);
-            case IntegrationMethod.RK2:
-                return Runge_Kutta_2(deltaTime, initialPosition, initialRotation, initialVelocity,initialAngularVelocity, state);
-            case IntegrationMethod.RK4:
-                return Runge_Kutta_4(deltaTime, initialPosition, initialRotation, initialVelocity,initialAngularVelocity, state);
-        }
-        
-        return (Vector3.zero, Quaternion.identity, Vector3.zero, Vector3.zero);
-    }
-    
-     private (Vector3, Quaternion, Vector3, Vector3) VelocityVerlet(float deltaTime,Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state) 
-     {
-         //F_k
-         Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ballValues.mass;
-         Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ballValues.inertialMomentum;
-
-         //v_k+1/2
-         Vector3 newVelocity = initialVelocity + deltaTime/2 * acceleration;
-         Vector3 newAngularVelocity = initialAngularVelocity + deltaTime/2 * angularAcceleration;
-         
-         if(state == BallState.Rolling)
-         {
-             float y = newAngularVelocity.y;
-             newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ballValues.radius;
-             newAngularVelocity.y = y;
-         }
-
-         //p_k+1
-         Vector3 newPosition = initialPosition + deltaTime * newVelocity;
-         Quaternion newRotation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialRotation;
-
-         //F_k+1
-         acceleration = CalculateTotalForces(newVelocity, newAngularVelocity, state) / ballValues.mass;
-         angularAcceleration = CalculateTotalTorque(newVelocity, newAngularVelocity, state) / ballValues.inertialMomentum;
-
-         //v_k+1
-         newVelocity += deltaTime/2 * acceleration;
-         newAngularVelocity += deltaTime/2 * angularAcceleration;
-
-         if (state != BallState.Bouncing && state != BallState.Stopped)
-         {
-             newPosition.y = ballValues.radius;
-
-             if (state == BallState.Rolling)
-             {
-                 float y = newAngularVelocity.y;
-                 newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ballValues.radius;
-                 newAngularVelocity.y = y;
-             }
-         }
-
-         return (newPosition, newRotation, newVelocity, newAngularVelocity);
-     }
-    
-     private (Vector3, Quaternion, Vector3, Vector3) ExplicitEuler(float deltaTime,Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        //F_k
-        Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ballValues.mass;
-        Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ballValues.inertialMomentum;
-        
-        //v_k+1
-        Vector3 newVelocity = initialVelocity + deltaTime * acceleration;
-        Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * angularAcceleration;
-        
-        //p_k+1
-        Vector3 newPosition = initialPosition + deltaTime * newVelocity;
-        Quaternion newRotation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialRotation;
-
-        if (state != BallState.Bouncing && state != BallState.Stopped)
-        {
-            newPosition.y = ballValues.radius;
-
-            if (state == BallState.Rolling)
-            {
-                float y = newAngularVelocity.y;
-                newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ballValues.radius;
-                newAngularVelocity.y = y;
-            }
-        }
-
-        return (newPosition, newRotation, newVelocity, newAngularVelocity);
-    }
-    
-    private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_2(float deltaTime,Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        //k1
-        Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ballValues.mass;
-        Vector3 k1V = deltaTime * acceleration;
-        Vector3 k1P = deltaTime * initialVelocity;
-        
-        Vector3 angularAcceleration =  CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ballValues.inertialMomentum;
-        Vector3 k1W = deltaTime * angularAcceleration;
-        Vector3 k1T = deltaTime * initialAngularVelocity;
-        
-        //k2
-        acceleration = CalculateTotalForces(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ballValues.mass;
-        Vector3 k2V = deltaTime * acceleration;
-        Vector3 k2P = deltaTime * (initialVelocity + k1V);
-        
-        angularAcceleration = CalculateTotalTorque(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ballValues.inertialMomentum;
-        Vector3 k2W = deltaTime * angularAcceleration;
-        Vector3 k2T = deltaTime * (initialAngularVelocity + k1W);
-        
-        Vector3 newPosition = initialPosition + (k1P + k2P) / 2;
-        Vector3 newVelocity = initialVelocity + (k1V + k2V) / 2;
-        
-        Vector3 newAngularVelocity = initialAngularVelocity + (k1W + k2W) / 2;
-        Quaternion newRotation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + k2T) / 2) * initialRotation;
-
-        if (state != BallState.Bouncing && state != BallState.Stopped)
-        {
-            newPosition.y = ballValues.radius;
-
-            if (state == BallState.Rolling)
-            {
-                float y = newAngularVelocity.y;
-                newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ballValues.radius;
-                newAngularVelocity.y = y;
-                newRotation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialRotation;
-            }
-        }
-
-        return (newPosition, newRotation, newVelocity, newAngularVelocity);
-    }
-
-    private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_4(float deltaTime,Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        //k1
-        Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ballValues.mass;
-        Vector3 k1V = deltaTime * acceleration;
-        Vector3 k1P = deltaTime * initialVelocity;
-        
-        Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ballValues.inertialMomentum;
-        Vector3 k1W = deltaTime * angularAcceleration;
-        Vector3 k1T = deltaTime * initialAngularVelocity;
-        
-        //k2
-        
-        acceleration = CalculateTotalForces(initialVelocity + k1V / 2, initialAngularVelocity + k1W / 2, state) / ballValues.mass;
-        Vector3 k2V = deltaTime * acceleration;
-        Vector3 k2P = deltaTime * (initialVelocity + k1V/2);
-        
-        angularAcceleration = CalculateTotalTorque(initialVelocity + k1V/2, initialAngularVelocity + k1W/2, state) / ballValues.inertialMomentum;
-        Vector3 k2W = deltaTime * angularAcceleration;
-        Vector3 k2T = deltaTime * (initialAngularVelocity + k1W/2);
-        
-        //k3
-        acceleration = CalculateTotalForces(initialVelocity + k2V / 2, initialAngularVelocity + k2W / 2, state) / ballValues.mass;
-        Vector3 k3V = deltaTime * acceleration;
-        Vector3 k3P = deltaTime * (initialVelocity + k2V/2);
-        
-        angularAcceleration = CalculateTotalTorque(initialVelocity + k2V/2, initialAngularVelocity + k2W/2, state) / ballValues.inertialMomentum;
-        Vector3 k3W = deltaTime * angularAcceleration;
-        Vector3 k3T = deltaTime * (initialAngularVelocity + k2W/2);
-        
-        //k4
-        acceleration = CalculateTotalForces(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ballValues.mass;
-        Vector3 k4V = deltaTime * acceleration;
-        Vector3 k4P = deltaTime * (initialVelocity + k3V);
-        
-        angularAcceleration = CalculateTotalTorque(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ballValues.inertialMomentum;
-        Vector3 k4W = deltaTime * angularAcceleration;
-        Vector3 k4T = deltaTime * (initialAngularVelocity + k3W);
-        
-        Vector3 newPosition = initialPosition + (k1P + 2*k2P + 2*k3P + k4P) / 6;
-        Vector3 newVelocity = initialVelocity + (k1V + 2*k2V + 2*k3V + k4V) / 6;
-        
-        Vector3 newAngularVelocity = initialAngularVelocity + (k1W + 2*k2W + 2*k3W + k4W) / 6;
-        Quaternion newRotation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + 2*k2T + 2*k3T + k4T) / 6) * initialRotation;
-        
-        if(state != BallState.Bouncing && state != BallState.Stopped)
-        {
-            newPosition.y = ballValues.radius;
-            
-            if (state == BallState.Rolling)
-            {
-                float y = newAngularVelocity.y;
-                newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ballValues.radius;
-                newAngularVelocity.y = y;
-                newRotation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialRotation;
+                ball.position = interpolatedPos;
+                ball.orientation = interpolatedRot;
             }
         }
         
-        return (newPosition, newRotation, newVelocity, newAngularVelocity);
-    }
-    
-    private (Vector3, Quaternion, Vector3, Vector3, BallState) CheckCollision(float deltaTime, Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-
-        //TODO spiegare che cosa fa
-        (Vector3 positionAfterCollision, Quaternion rotationAfterCollision, Vector3 velocityAfterCollision, Vector3 angularVelocityAfterCollision) = ContinuousCollisionDetection(deltaTime / 2, deltaTime / 2,initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-        
-        if (velocityAfterCollision.y < 1e-1)
+        //display predicted trajectories gizmos
+        private void DisplayComputedTrajectories()
         {
-            velocityAfterCollision.y = 0f;
-            positionAfterCollision.y = ballValues.radius;
-            state = BallState.Sliding;
-        }
-
-        return (positionAfterCollision, rotationAfterCollision, velocityAfterCollision, angularVelocityAfterCollision, state);
-    }
-
-    private BallState CheckPureRolling(BallState state, Vector3 friction, Vector3 previousFriction)
-    {
-        //TODO spiegare perchè utilizzo questa euristica
-        if(state == BallState.Sliding && Vector3.Dot(friction, previousFriction) < 0)
-        {
-            state = BallState.Rolling;
-        }
-
-        return state;
-    }
-    
-    private void CheckIsMoving()
-    {
-        if (ballValues.CalculateTotalEnergy() < 1e-4)
-        {
-            ballValues.ResetValues();
-        }
-    }
-    
-    private (Vector3, Quaternion, Vector3, Vector3) ContinuousCollisionDetection(float deltaTime, float step, Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        (Vector3 position, _, _, _) = IntegrateMotion(deltaTime, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
+            if (!Application.isPlaying)
+                return;
         
-        if (position.y - ballValues.radius <= 0f)
-        {
-            //collision
-            if (step < CollisionDetectionError)
-            {
-                float collisionDeltaTime = deltaTime - step / 2;
-
-                return CalculateBounce(collisionDeltaTime, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-            }
-            
-            return ContinuousCollisionDetection(deltaTime - step/2, step/2, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-        }
-        else
-        {
-            //no collision
-            if (step < CollisionDetectionError)
-            {
-                float collisionDeltaTime = deltaTime + step / 2;
-
-                return CalculateBounce(collisionDeltaTime, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-            }
-
-            return ContinuousCollisionDetection(deltaTime + step/2, step/2, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-        }
-    }
-
-    private (Vector3, Quaternion, Vector3, Vector3) CalculateBounce(float bounceDeltaTime, Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-    {
-        //this first part calculates the new velocity and angular velocity immediately after the bounce
-        (Vector3 collisionPoint, Quaternion collisionRotation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(bounceDeltaTime, initialPosition, initialRotation, initialVelocity, initialAngularVelocity, state);
-        
-        //TODO spiegare funzionamento del rimbalzo
-
-        Vector3 velocityAfterCollision = new Vector3();
-        Vector3 angularVelocityAfterCollision = new Vector3();
-        
-        float alpha = 2f / 3f;
-        velocityAfterCollision.x = velocityBeforeCollision.x * (1 - alpha * ballValues.coefficientOfHorizontalRestitution)  / (alpha + 1) -
-                                   alpha * (1 + ballValues.coefficientOfHorizontalRestitution) / (alpha + 1) * ballValues.radius * angularVelocityBeforeCollision.z;
-
-        velocityAfterCollision.y = -ballValues.coefficientOfVerticalRestitution * velocityBeforeCollision.y;
-        velocityAfterCollision.z = velocityBeforeCollision.z * (1 - alpha * ballValues.coefficientOfHorizontalRestitution) / (alpha + 1) +
-                 alpha * (1 + ballValues.coefficientOfHorizontalRestitution) / (alpha + 1) * ballValues.radius * angularVelocityBeforeCollision.x;
-
-        angularVelocityAfterCollision.x = (alpha-ballValues.coefficientOfHorizontalRestitution)/(alpha+1) * angularVelocityBeforeCollision.x + (ballValues.coefficientOfHorizontalRestitution+1)/(alpha+1) * velocityBeforeCollision.z/ballValues.radius;
-        angularVelocityAfterCollision.y = angularVelocityBeforeCollision.y * ballValues.coefficientRotationRestitutionYaxis;
-        angularVelocityAfterCollision.z = (alpha-ballValues.coefficientOfHorizontalRestitution)/(alpha+1) * angularVelocityBeforeCollision.z - (ballValues.coefficientOfHorizontalRestitution+1)/(alpha+1) * velocityBeforeCollision.x/ballValues.radius;
-        
-        if(!precompute && !targetKickTesting)
-            GetComponent<TrajectoryTracker>().AddPoint(collisionPoint, Color.blue);
-        
-        //this part calculates the trajectory of the ball starting from the moment when it touched the ground to the end of the frame
-        float remainingTime = Time.fixedDeltaTime - bounceDeltaTime;
-        
-        return IntegrateMotion(remainingTime, collisionPoint, collisionRotation, velocityAfterCollision, angularVelocityAfterCollision, state);
-    }
-    
-     private (Vector3, Vector3) FindInitialVelocity(Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle)
-     { 
-        float startTime = Time.realtimeSinceStartup;
-        
-        Vector3 direction = new Vector3(target.transform.position.x - initialPosition.x, 0, target.transform.position.z - initialPosition.z).normalized;
-        //TODO espendadere con variabili piu capibili
-        direction = new Vector3(direction.x * Mathf.Cos((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad), Mathf.Sin((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad), direction.z * Mathf.Cos((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad));
-        Vector3 velocity = direction * speed;
-        Vector3 rotatedSpin = RotateSpinTowardVelocityDirection(velocity, spin);
-
-        //TODO count iterazioni
-        int count = 0;
-        float error = float.MaxValue;
-        Quaternion rotation = Quaternion.identity;
-
-        //TODO spiegare cosa sono
-        float angle0 = 180f;
-        float angle1 = 90f;
-        
-        float distance = Vector3.Distance(target.transform.position, initialPosition);
-        
-        //TODO SPIEGARE PERCHE 25 
-        //max error depends on the distance from the target
-        float maxError = distance < 25 ? precalculationMaxError : precalculationMaxError + Mathf.Pow(distance - 25,2) * 1e-4f;
-        
-        //TODO utilizzare un random con SEED
-        System.Random random = new System.Random();
-        
-        while (error > maxError && count < maxIterations)
-        {
-            count++;
-            
-            _currentTrajectory = new List<Vector3>();
-            
-            Vector3 rotatedVelocity = rotation * velocity;
-                
-            //rotate the spin to be in the direction of the current iteration of the velocity
-            rotatedSpin = RotateSpinTowardVelocityDirection(rotatedVelocity, spin);
-            
-            (Vector3 position,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, rotatedVelocity, rotatedSpin);
-            placeholder.transform.position = position;
-            
-            //check angle over ground plane is less than maxVerticalAngle degrees, otherwise stops calculation
-            float dot = Vector3.Dot(rotatedVelocity.normalized, Vector3.up);
-            float totalAngle = 90f - Mathf.Acos(dot) * Mathf.Rad2Deg;
-            
-            if (totalAngle >= maxVerticalAngle || totalAngle <= minVerticalAngle)
-            {
-                _currentTrajectory = new List<Vector3>();
-                
-                float velocityMagnitude = rotatedVelocity.magnitude;
-                
-                Vector2 xzProjection = new Vector2(rotatedVelocity.x, rotatedVelocity.z);
-                float xzMagnitude = xzProjection.magnitude;
-
-                float newY;
-                if(totalAngle >= maxVerticalAngle)
-                    newY = Mathf.Tan(maxVerticalAngle * Mathf.Deg2Rad) * xzMagnitude;
-                else
-                    newY = Mathf.Tan(minVerticalAngle) * xzMagnitude;
-                
-                velocity = new Vector3(rotatedVelocity.x, newY, rotatedVelocity.z).normalized * velocityMagnitude;
-                
-                rotatedSpin = RotateSpinTowardVelocityDirection(rotatedVelocity, spin);
-
-                (position,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-                
-                error = Vector3.Distance(position, target.transform.position);
-
-                if(!barrierShot)
-                    _precalculationTrajectories.Add(_currentTrajectory);
-                
-                //TODO spiegare il break
-                placeholder.transform.position = position;
-                break;
-            }
-            else
-            {
-                velocity = rotatedVelocity;
-
-                error = Vector3.Distance(position, target.transform.position);
-
-                Vector3 vTarget = (target.transform.position - initialPosition).normalized;
-                Vector3 vIteration = (position - initialPosition).normalized;
-                float cosTheta = Vector3.Dot(vIteration, vTarget);
-
-                Vector3 rotationAxis = Vector3.Cross(vIteration, vTarget).normalized;
-
-                float angle = Mathf.Acos(Mathf.Clamp(cosTheta, -1f, 1f)) * Mathf.Rad2Deg;
-
-                //adjust slightly the speed if one of the 2 cases happen, otherwise the predictor would keep calculating without improving the shot until maximum iterations are reached
-                if ((angle < 1e-3 || Mathf.Abs(angle0 - angle) < 1e-3) && error > maxError && count < maxIterations)
-                {
-                    velocity *= random.Next(2) == 0 ? 1.0005f : 0.9995f;
-                }
-
-                angle0 = angle1;
-                angle1 = angle;
-
-                rotation = Quaternion.AngleAxis(angle, rotationAxis);
-
-                if (!barrierShot)
-                    _precalculationTrajectories.Add(_currentTrajectory);
-            }
-        }
-        
-        float endTime = Time.realtimeSinceStartup;
-        
-        if(!barrierShot)
-        {
-            Debug.Log("Prediction duration: " + ((endTime - startTime) * 1e3).ToString("F3") + " ms with " + count +
-                      " iterations");
-            Debug.Log("Error: " + (error * 1e3).ToString("F3") + " mm");
-
-            if (targetKickTesting)
-            {
-                _totalComputationTime += (endTime - startTime) * 1e3f;
-                errors.Add(error * 1e3f);
-                startPositions.Add(_testCurrentPosition);
-                distances.Add(Vector3.Distance(_testCurrentPosition, target.transform.position));
-                iterations.Add(count);
-                computationTime.Add((endTime - startTime) * 1e3f);
-                averageComputationTime = _totalComputationTime / (errors.Count);
-
-                if (error * 1e3f > 10f)
-                {
-                    outliersStartPositions.Add(_testCurrentPosition);
-                    outliersError.Add(error * 1e3f);
-                }
-            }
-        }
-
-        return (velocity, rotatedSpin);
-     }
-
-     public GameObject noVerticalSpinBallPlaceholder;
-     public GameObject noHorizontalSpinBallPlaceholder;
-     
-private (Vector3, Vector3)  FindInitialVelocityWithConstraint(Vector3 initialPosition, float speed)
-    { 
-        float startTime = Time.realtimeSinceStartup;
-        int count = 1;
-        float minVerticalAngle = 0f;
-        float maxVerticalAngle = 30f;
-
-        //finds initial velocity to reach the target with no spin and without considering that the ball has to pass above the barrier
-        Vector3 direction = new Vector3(target.transform.position.x - initialPosition.x, 0, target.transform.position.z - initialPosition.z).normalized;
-        direction = new Vector3(direction.x * Mathf.Cos((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad), Mathf.Sin((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad), direction.z * Mathf.Cos((maxVerticalAngle - minVerticalAngle) / 2 * Mathf.Deg2Rad));
-        Vector3 velocity = direction * speed;
-        _currentTrajectory = new List<Vector3>();
-        (_, Vector3 predictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, Vector3.zero);
-        
-        //rotate velocity towards constraint and then calculate the new trajectory with the new direction
-        velocity = RotateVelocityTowardConstraint(initialPosition, predictedConstraintPosition, constraint.transform.position, velocity, maxVerticalAngle, speed);
-        (Vector3 noSpinPredictedTargetPosition,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, Vector3.zero);
-        
-        //finds displacement of the previous shot from the target
-        Vector3 targetDisplacement = (noSpinPredictedTargetPosition - target.transform.position ).normalized;
-        
-        //choose the direction of the verticalspin based on the displacement of the previous shot and rotates it towards the direction of the velocity
-        Vector3 spin = new Vector3(0, Math.Sign(targetDisplacement.z), -Math.Sign(targetDisplacement.y)) * maximumSpinValue;
-        Vector3 rotatedSpin = RotateSpinTowardVelocityDirection(velocity, spin);
-        
-        _currentTrajectory = new List<Vector3>();
-        (Vector3 adjustedSpinPredictedTargetPosition,Vector3 adjustSpinPredictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-        _precalculationTrajectories.Add(_currentTrajectory);
-        
-        //finds distance from target and from constraint of the trajectory
-        float targetError = (adjustedSpinPredictedTargetPosition - target.transform.position).magnitude;
-        float constrainError = (adjustSpinPredictedConstraintPosition - constraint.transform.position).magnitude;
-        
-        float horizontalSpinMagnitude = maximumSpinValue;
-        float verticalSpinMagnitude = maximumSpinValue;
-
-        float previousTargetError = float.MaxValue;
-        bool stopped = false;
-        
-        //using this i can have ball passing even over the target(it is ok to pass above the barrier) but aims to the target
-        //if(spinMagnitude < maximumSpinValue && adjustSpinPredictedConstraintPosition.y - constraint.transform.position.y < 0)
-        { 
-            while (count < maxIterations && (targetError > 1e-2 || constrainError > 1e-1))
-            {
-                _currentTrajectory = new List<Vector3>();
-                
-                //computes trajectory having spin without horizontal component
-                Vector3 noHorizontalSpin = rotatedSpin;
-                noHorizontalSpin.y = 0f;
-                (Vector3 noHorizontalSpinPredictedTargetPosition,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, noHorizontalSpin);
-                targetDisplacement = (noHorizontalSpinPredictedTargetPosition - target.transform.position ).normalized;
-                
-                //finds the new horizontal spin proportionally to the distances of the shot with the previously found spin and the desire shot from the shot with no horizontal spin
-                float d1 = Mathf.Abs(adjustedSpinPredictedTargetPosition.z - noHorizontalSpinPredictedTargetPosition.z);
-                float d2 = Mathf.Abs(target.transform.position.z - noHorizontalSpinPredictedTargetPosition.z); 
-                horizontalSpinMagnitude = Mathf.Min(horizontalSpinMagnitude * d2 / d1, maximumSpinValue);
-                spin.y = Math.Sign(targetDisplacement.z) * horizontalSpinMagnitude;
-                rotatedSpin.y = spin.y;
-                
-                //computes trajectory with the new found horizontal spin and rotates velocity towards the constraint
-                (_, predictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-                velocity = RotateVelocityTowardConstraint(initialPosition, predictedConstraintPosition,constraint.transform.position, velocity, maxVerticalAngle, speed);
-                rotatedSpin = RotateSpinTowardVelocityDirection(velocity, spin);
-
-                //computes new predicted position to find new predicted position of the target
-                (adjustedSpinPredictedTargetPosition,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-                
-                //computes trajectory having spin without vertical component
-                Vector3 noVerticalSpin = spin;
-                noVerticalSpin.z = 0f;
-                (Vector3 noVerticalSpinPredictedTargetPosition,_) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, noVerticalSpin);
-                targetDisplacement = (noVerticalSpinPredictedTargetPosition - target.transform.position ).normalized;
-
-                //finds the new vertical spin proportionally to the distances of the shot with the previously found spin and the desire shot from the shot with no vertical spin
-                d1 = adjustedSpinPredictedTargetPosition.y - noVerticalSpinPredictedTargetPosition.y;
-                d2 = target.transform.position.y - noVerticalSpinPredictedTargetPosition.y;
-                verticalSpinMagnitude = Mathf.Min(verticalSpinMagnitude * Math.Abs(d2 / d1), maximumSpinValue);
-                spin.z = -Math.Sign(targetDisplacement.y) * verticalSpinMagnitude;
-                rotatedSpin = RotateSpinTowardVelocityDirection(velocity, spin);
-                
-                //computes trajectory with the new found vertical spin and rotates velocity towards the constraint
-                (_, predictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-                velocity = RotateVelocityTowardConstraint(initialPosition, predictedConstraintPosition,constraint.transform.position, velocity, maxVerticalAngle, speed);
-                rotatedSpin = RotateSpinTowardVelocityDirection(velocity, spin);
-                
-                //computes new predicted position to find new predicted position of the target
-                _currentTrajectory = new List<Vector3>();
-                (adjustedSpinPredictedTargetPosition,adjustSpinPredictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-                _precalculationTrajectories.Add(_currentTrajectory);
-                
-                //finds distance from target and from constraint of the trajectory
-                targetError = (adjustedSpinPredictedTargetPosition - target.transform.position).magnitude;
-                constrainError = (adjustSpinPredictedConstraintPosition - constraint.transform.position).magnitude;
-                
-                if (targetError > 3 || Mathf.Abs(targetError - previousTargetError) < 1e-4 && (Mathf.Abs(spin.y) - maximumSpinValue < 1e-6 || Mathf.Abs(spin.z) - maximumSpinValue < 1e-6))
-                {
-                    stopped = true;
-                    break;
-                }
-                
-                previousTargetError = targetError;
-                
-                count++;
-                
-                //DEBUG
-                //noVerticalSpinBallPlaceholder.transform.position = noVerticalSpinPredictedTargetPosition;
-                //noHorizontalSpinBallPlaceholder.transform.position = noHorizontalSpinPredictedTargetPosition;
-            }
-        }
-        
-        _currentTrajectory = new List<Vector3>();
-        (adjustedSpinPredictedTargetPosition,adjustSpinPredictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-        placeholder.transform.position = adjustedSpinPredictedTargetPosition;
-        constraintPlaceholder.transform.position = adjustSpinPredictedConstraintPosition;
-        _precalculationTrajectories.Add(_currentTrajectory);
-        
-        //finds distance from target and from constraint of the trajectory
-        targetError = (adjustedSpinPredictedTargetPosition - target.transform.position).magnitude;
-        constrainError = (adjustSpinPredictedConstraintPosition - constraint.transform.position).magnitude;
-
-        if (stopped)
-        {
-            (velocity, rotatedSpin) = FindInitialVelocity(initialPosition, speed, spin, minVerticalAngle, maxVerticalAngle);
-            
-            _currentTrajectory = new List<Vector3>();
-            (adjustedSpinPredictedTargetPosition,adjustSpinPredictedConstraintPosition) = PrecomputeTrajectory(initialPosition, Quaternion.identity, velocity, rotatedSpin);
-            placeholder.transform.position = adjustedSpinPredictedTargetPosition;
-            constraintPlaceholder.transform.position = adjustSpinPredictedConstraintPosition;
-            _precalculationTrajectories.Add(_currentTrajectory);
-            
-            //finds distance from target and from constraint of the trajectory
-            targetError = (adjustedSpinPredictedTargetPosition - target.transform.position).magnitude;
-            constrainError = (adjustSpinPredictedConstraintPosition - constraint.transform.position).magnitude;
-
-            count++;
-        }
-        
-        float endTime = Time.realtimeSinceStartup;
-        
-        Debug.Log("Constrained kick prediction duration: " + ((endTime - startTime)*1e3).ToString("F3") + " ms with " + count + " iterations");
-        Debug.Log("Constraint error: " + (constrainError*1e3f).ToString("F3") + " mm");
-        Debug.Log("Target error: " + (targetError*1e3f).ToString("F3") + " mm");
-        
-        if (targetKickTesting)
-        {
-            _totalComputationTime += (endTime - startTime) * 1e3f;
-            errors.Add(targetError*1e3f);
-            startPositions.Add(_testCurrentPosition);
-            distances.Add(Vector3.Distance(_testCurrentPosition, target.transform.position));
-            iterations.Add(count);
-            initialSpeeds.Add(speed);
-            constraintErrors.Add(Mathf.Abs(constrainError*1e3f));
-            zSpin.Add(spin.z);
-            ySpin.Add(spin.y);
-            computationTime.Add((endTime - startTime) * 1e3f);
-            averageComputationTime = _totalComputationTime / (errors.Count);
-
-            if(targetError*1e3f > 10f)
-            {
-                outliersStartPositions.Add(_testCurrentPosition);
-                outliersError.Add(targetError*1e3f);
-            }
-        }
-        
-        return (velocity,rotatedSpin);
-    }
-
-    private Vector3 RotateVelocityTowardConstraint(Vector3 initialPosition, Vector3 predictedConstraintPosition, Vector3 constraintPosition, Vector3 velocity, float maxVerticalAngle, float speed)
-    {
-        Vector3 vIteration = (predictedConstraintPosition - initialPosition).normalized;
-        Vector3 vTarget = (constraintPosition - initialPosition).normalized;
-        Vector3 direction = velocity.normalized;        
-        Quaternion rotation = Quaternion.FromToRotation(vIteration, vTarget);
-        direction = rotation * direction;
-        float dot = Vector3.Dot(direction.normalized, Vector3.up);
-        float verticalAngle = 90f - Mathf.Acos(dot) * Mathf.Rad2Deg;
-        if(verticalAngle > maxVerticalAngle)
-            direction = new Vector3(direction.x * Mathf.Cos(maxVerticalAngle * Mathf.Deg2Rad), Mathf.Sin(maxVerticalAngle * Mathf.Deg2Rad), direction.z * Mathf.Cos(maxVerticalAngle * Mathf.Deg2Rad));
-       
-        return direction * speed;
-    }
-
-    private Vector3 RotateSpinTowardVelocityDirection(Vector3 velocity, Vector3 spin)
-    {
-        Vector3 targetXZ = new Vector3(velocity.x, 0f, velocity.z).normalized;
-        Quaternion targetRotation = Quaternion.Euler(0,-90,0) * Quaternion.LookRotation(targetXZ, Vector3.up);
-        
-        return targetRotation * spin;
-    }
-     
-    private (Vector3,Vector3) PrecomputeTrajectory(Vector3 initialPosition, Quaternion initialRotation, Vector3 initialVelocity, Vector3 initialAngularVelocity)
-    {
-        bool stop = false;
-        float deltaTime = 1f / precomputationFrameRate;
-        
-        Vector3 position = initialPosition, newPosition, oldPosition = initialPosition;
-        Quaternion rotation = initialRotation, newRotation, oldRotation = initialRotation;
-        Vector3 velocity = initialVelocity, newVelocity, oldVelocity = initialVelocity;
-        Vector3 angularVelocity = initialAngularVelocity, newAngularVelocity, oldAngularVelocity = initialAngularVelocity;
-        
-        Vector3 closestPoint = position;
-        Vector3 constraintClosestPoint = new Vector3();
-        
-        float oldTargetError = Vector3.Distance(position, target.transform.position);
-        float oldConstraintError = Vector3.Distance(position, constraintClosestPoint);
-        
-        while(!stop)
-        {
-            (newPosition, newRotation, newVelocity, newAngularVelocity) = IntegrateMotion(deltaTime, position,  rotation, velocity, angularVelocity, BallState.Bouncing);
-            _currentTrajectory.Add(newPosition);
-            
-            float targetError = Vector3.Distance(position, target.transform.position);
-            float newTargetError = Vector3.Distance(newPosition, target.transform.position);
-
-            if (targetError <= oldTargetError && targetError <= newTargetError)
-            {
-                stop = true;
-
-                closestPoint = oldTargetError <= newTargetError ? FindClosestPoint(deltaTime / 2, deltaTime / 4, oldPosition, oldRotation, oldVelocity, oldAngularVelocity, BallState.Bouncing, target.transform.position) : FindClosestPoint(deltaTime / 2, deltaTime / 4, position, rotation, velocity, angularVelocity, BallState.Bouncing, target.transform.position);
-            }
-            oldTargetError = targetError;
-
-            if(barrierShot)
-            {
-                float constraintError = Vector3.Distance(position, constraint.transform.position);
-                float newConstraintError = Vector3.Distance(newPosition, constraint.transform.position);
-
-                if (constraintError <= oldConstraintError && constraintError <= newConstraintError)
-                {
-                    constraintClosestPoint = oldConstraintError <= newConstraintError
-                        ? FindClosestPoint(deltaTime / 2, deltaTime / 4, oldPosition, oldRotation, oldVelocity,
-                            oldAngularVelocity, BallState.Bouncing, constraint.transform.position)
-                        : FindClosestPoint(deltaTime / 2, deltaTime / 4, position, rotation, velocity, angularVelocity, BallState.Bouncing,
-                            constraint.transform.position);
-                }
-
-                oldConstraintError = constraintError;
-            }
-            
-            oldPosition = position;
-            oldVelocity = velocity;
-            oldAngularVelocity = angularVelocity;
-            oldRotation = rotation;
-            
-            velocity = newVelocity;
-            position = newPosition;
-            angularVelocity = newAngularVelocity;
-            rotation = newRotation;
-        }
-
-        return (closestPoint, constraintClosestPoint);
-    }
-
-    public List<Vector3> ComputeKickTrajectory(Vector3 direction, float speed, Vector3 spin)
-    {
-        List<Vector3> kickTrajectory = new List<Vector3>();
-        
-        float deltaTime = 1f/precomputationFrameRate;
-        int count = 0;
-        
-        Vector3 targetXY = direction;
-        targetXY.y = 0f;
-
-        Quaternion targetRotation = Quaternion.LookRotation(targetXY, Vector3.up);
-
-        Vector3 position = ballValues.position;
-        Quaternion rotation = ballValues.rotation;
-        Vector3 velocity = direction * speed;
-        Vector3 angularVelocity = targetRotation * new Vector3(spin.y, 0, 0) * maximumSpinValue;
-        angularVelocity.y = -spin.x * maximumSpinValue;
-        
-        while(count < 15)
-        {
-            (Vector3 newPosition, Quaternion newRotation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, position, rotation, velocity, angularVelocity, ballValues.state);
-            
-            if (newPosition.y - ballValues.radius <= 0f && ballValues.state == BallState.Bouncing && newVelocity.y < 0)
-            {
-                (newPosition, newRotation, newVelocity, newAngularVelocity, ballValues.state) = CheckCollision(deltaTime, position, rotation, velocity, angularVelocity, ballValues.state);
-            }
-
-            position = newPosition;
-            rotation = newRotation;
-            velocity = newVelocity;
-            angularVelocity = newAngularVelocity;
-            
-            count++;
-            kickTrajectory.Add(position);
-        }
-        
-        
-        return kickTrajectory;
-    }
-    
-    private Vector3 FindClosestPoint(float deltaTime, float step , Vector3 position, Quaternion rotation, Vector3 velocity, Vector3 angularVelocity, BallState state, Vector3 targetPosition)
-    {
-        (Vector3 pMinus, _, _, _) = IntegrateMotion(deltaTime - step, position, rotation, velocity, angularVelocity, state);
-        float distance1 = Vector3.Distance(pMinus, targetPosition);
-        
-        (Vector3 pPlus, _, _, _) = IntegrateMotion(deltaTime + step, position, rotation, velocity, angularVelocity, state);
-        float distance2 = Vector3.Distance(pPlus, targetPosition);
-        
-        Vector3 closestPoint;
-        
-        if (distance1 < distance2) 
-        {
-            
-            if (step < CollisionDetectionError)
-            {
-                float correctDeltaTime = (deltaTime - step);
-
-                (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, rotation, velocity, angularVelocity, state);
-                
-                return closestPoint;
-            }
-            
-            closestPoint = FindClosestPoint(deltaTime - step, step/2, position, rotation, velocity, angularVelocity, state, targetPosition);
-        }
-        else
-        {
-            if (step < CollisionDetectionError)
-            {
-                float correctDeltaTime = (deltaTime + step);
-
-                (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, rotation, velocity, angularVelocity, state);
-
-                return closestPoint;
-            }
-
-            closestPoint = FindClosestPoint(deltaTime + step, step/2, position, rotation, velocity, angularVelocity, state, targetPosition);
-        }
-
-        return closestPoint;
-    }
-    
-    void OnDrawGizmos()
-    {
-        if(!precompute)
-        {
             Color[] colorArray = new Color[_precalculationTrajectories.Count];
-            for (int i = 0; i < _precalculationTrajectories.Count; i++)
+            for (int i = 1; i <= _precalculationTrajectories.Count; i++)
             {
-                float t = (float)i / (_precalculationTrajectories.Count - 1);
-                colorArray[i] = Color.Lerp(Color.green, Color.blue, t);
+                float t = (float)i / _precalculationTrajectories.Count;
+                colorArray[i-1] = Color.Lerp(Color.green, Color.blue, t);
             }
 
             for (int i = 0; i < _precalculationTrajectories.Count; i++)
             {
-                if (_precalculationTrajectories[i].Count < 2) continue;
 
                 Handles.color = colorArray[i]; 
 
@@ -1091,265 +1226,210 @@ private (Vector3, Vector3)  FindInitialVelocityWithConstraint(Vector3 initialPos
                 Handles.DrawAAPolyLine(7.5f, linePoints);
             }
         }
-    }
+
+    #endregion
     
-    public Vector3 Position()
-    {
-        if (frameByFrame)
+    #region Getters
+        public Vector3 TotalForces()
         {
-            return frameArray[frameCount].position;
-        }
-        return ballValues.position;
-    }
-    
-    public Vector3 Velocity()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].v_n;
-        }
-        return ballValues.velocity;
-    }
-    
-    public Vector3 AngularVelocity()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].w_n;
-        }
-        return ballValues.angularVelocity;
-    }
-
-    public Vector3 Acceleration()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].a_n;
-        }
-        
-        return CalculateTotalForces(ballValues.velocity, ballValues.angularVelocity, ballValues.state)/ballValues.mass;
-    }
-    
-    public float PotentialEnergy()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].potentialEnergy;
-        }
-        return ballValues.CalculatePotentialEnergy();
-    }
-
-    public float KineticEnergy()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].kineticEnergy;
-        }
-        return ballValues.CalculateKineticEnergy();
-    }
-
-    public float RotationalEnergy()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].rotationalEnergy;
-        }
-        return ballValues.CalculateRotationalEnergy();
-    }
-
-    public float TotalEnergy()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].totalEnergy;
-        }
-        return ballValues.CalculateTotalEnergy();
-    }
-    
-    private Vector3 CalculateFrictionTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
-    {
-        if(state == BallState.Bouncing)
-            return Vector3.zero;
-        
-        //TODO spiegare
-        Vector3 frictionTorque = new Vector3(0, - ballValues.mass * Gravity * ballValues.coefficientOfVerticalAxisSpinningFriction * angularVelocity.y, 0);
-        
-        if (state == BallState.Rolling)
-            return frictionTorque;
-        
-        Vector3 direction = (angularVelocity + Vector3.Cross(velocity, Vector3.up) / ballValues.radius).normalized;
-        Vector3 alpha = -3f/2f * ballValues.coefficientOfSlidingFriction * Gravity / ballValues.radius * direction;
-
-        frictionTorque += alpha * ballValues.inertialMomentum;
-        
-        return frictionTorque;
-    }
-
-    private Vector3 CalculateTotalTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
-    {
-        return CalculateFrictionTorque(velocity, angularVelocity, state);
-    }
-
-    public Vector3 TotalForces()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].totalForces;
-        }
-        return CalculateTotalForces(ballValues.velocity, ballValues.angularVelocity, ballValues.state);
-    }
-
-    public Vector3 DragForce()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].dragForce;
-        }
-        return CalculateDragForce(ballValues.velocity, ballValues.angularVelocity);
-    }
-
-    public Vector3 MagnusForce()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].magnusForce;
-        }
-        return CalculateMagnusForce(ballValues.velocity, ballValues.angularVelocity);
-    }
-
-    public Vector3 NormalForce()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].normalForce;
-        }
-        return CalculateNormalForce(ballValues.velocity, ballValues.angularVelocity, ballValues.state);
-    }
-
-    public Vector3 FrictionForce()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].frictionForce;
-        }
-        return CalculateFrictionForce(ballValues.velocity, ballValues.angularVelocity, ballValues.state);
-    }
-
-    public Vector3 FrictionTorque()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].frictionTorque;
-        }
-        return CalculateFrictionTorque(ballValues.velocity, ballValues.angularVelocity, ballValues.state);
-    }
-    
-    public Vector3 TotalTorque()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].totalTorque;
-        }
-        return CalculateTotalTorque(ballValues.velocity, ballValues.angularVelocity, ballValues.state);
-    }
-
-    public float TimeToCompute()
-    {
-        if(frameByFrame)
-        {
-            return frameArray[frameCount].timeToCompute;
-        }
-        return _timeToCompute;
-    }
-    
-    public float AverageTimeToCompute()
-    {
-        if (frameArray == null || frameArray.Length == 0)
-            return 0;
-        
-        return _totalTimeToCompute / _frames.Count;
-    }
-    
-            private Vector3 CalculateDragForce(Vector3 velocity, Vector3 angularVelocity)
-    {
-        //TODO spiegare questi calcoli (paper)
-        if(!ballValues.useCustomDragCoefficient)
-        {
-            float s = angularVelocity.magnitude * ballValues.radius / velocity.magnitude;
-            float Re = velocity.magnitude * 2*ballValues.radius / kinematicViscosityOfAir;
-            float ReC = ballValues.vc * 2*ballValues.radius / kinematicViscosityOfAir;
-            float ReS = ballValues.vs * 2*ballValues.radius / kinematicViscosityOfAir;
-
-            if (velocity.magnitude > ballValues.vc && s > 0.05f)
+            if(useFrameByFrameMode)
             {
-                ballValues.dragCoefficient = 0.4127f * Mathf.Pow(s, 0.3056f);
+                return CalculateTotalForces(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
             }
-            else
-                ballValues.dragCoefficient = 0.155f + 0.346f / (1 + Mathf.Exp((Re - ReC) / ReS));
+            return CalculateTotalForces(ball.velocity, ball.angularVelocity, ball.state);
         }
-        else
+
+        public Vector3 DragForce()
         {
-            ballValues.dragCoefficient = ballValues.customDragCoefficient;
+            if(useFrameByFrameMode)
+            {
+                return ComputeAirResistanceForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity);
+            }
+            return ComputeAirResistanceForce(ball.velocity, ball.angularVelocity);
+        }
+
+        public Vector3 MagnusForce()
+        {
+            if(useFrameByFrameMode)
+            {
+                return ComputeMagnusForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity);
+            }
+            return ComputeMagnusForce(ball.velocity, ball.angularVelocity);
+        }
+
+        public Vector3 NormalForce()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateNormalForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity);
+            }
+            return CalculateNormalForce(ball.velocity, ball.angularVelocity);
+        }
+
+        public Vector3 FrictionForce()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateFrictionForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
+            }
+            return CalculateFrictionForce(ball.velocity, ball.angularVelocity, ball.state);
+        }
+
+        public Vector3 FrictionTorque()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateFrictionTorque(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
+            }
+            return CalculateFrictionTorque(ball.velocity, ball.angularVelocity, ball.state);
         }
         
-        return - 0.5f * airDensity * ballValues.dragCoefficient * Mathf.PI * Mathf.Pow(ballValues.radius, 2) * velocity.magnitude * velocity;
-    }
+        public Vector3 TotalTorque()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateTotalTorque(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
+            }
+            return CalculateTotalTorque(ball.velocity, ball.angularVelocity, ball.state);
+        }
+
+        public float TimeToCompute()
+        {
+            if(useFrameByFrameMode)
+            {
+                return ball.Frames[FrameCount].TimeToCompute;
+            }
+            return _timeToComputeFrame;
+        }
+        
+         public Vector3 Position()
+        {
+            if (useFrameByFrameMode)
+            {
+                return ball.Frames[FrameCount].Position;
+            }
+            return ball.position;
+        }
+        
+        public Vector3 Velocity()
+        {
+            if(useFrameByFrameMode)
+            {
+                return ball.Frames[FrameCount].Velocity;
+            }
+            return ball.velocity;
+        }
+        
+        public Vector3 AngularVelocity()
+        {
+            if(useFrameByFrameMode)
+            {
+                return ball.Frames[FrameCount].AngularVelocity;
+            }
+            return ball.angularVelocity;
+        }
+
+        public Vector3 Acceleration()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateTotalForces(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State)/ball.mass;
+            }
+            
+            return CalculateTotalForces(ball.velocity, ball.angularVelocity, ball.state)/ball.mass;
+        }
+        
+        public float PotentialEnergy()
+        {
+            if(useFrameByFrameMode)
+            {
+                Vector3 savedPos = ball.position;
+                Quaternion savedRot = ball.orientation;
+                Vector3 savedVel = ball.velocity;
+                Vector3 savedAng = ball.angularVelocity;
+                ball.position = ball.Frames[FrameCount].Position;
+                ball.orientation = ball.Frames[FrameCount].Orientation;
+                ball.velocity = ball.Frames[FrameCount].Velocity;
+                ball.angularVelocity = ball.Frames[FrameCount].AngularVelocity;
+                float potentialEnergy = ball.CalculatePotentialEnergy();
+                ball.position = savedPos;
+                ball.orientation = savedRot;
+                ball.velocity = savedVel;
+                ball.angularVelocity = savedAng;
+                return potentialEnergy;
+            }
+            return ball.CalculatePotentialEnergy();
+        }
+
+        public float KineticEnergy()
+        {
+            if(useFrameByFrameMode)
+            {
+                Vector3 savedPos = ball.position;
+                Quaternion savedRot = ball.orientation;
+                Vector3 savedVel = ball.velocity;
+                Vector3 savedAng = ball.angularVelocity;
+                ball.position = ball.Frames[FrameCount].Position;
+                ball.orientation = ball.Frames[FrameCount].Orientation;
+                ball.velocity = ball.Frames[FrameCount].Velocity;
+                ball.angularVelocity = ball.Frames[FrameCount].AngularVelocity;
+                float kineticEnergy = ball.CalculateKineticEnergy();
+                ball.position = savedPos;
+                ball.orientation = savedRot;
+                ball.velocity = savedVel;
+                ball.angularVelocity = savedAng;
+                return kineticEnergy;
+            }
+            return ball.CalculateKineticEnergy();
+        }
+
+        public float RotationalEnergy()
+        {
+            if(useFrameByFrameMode)
+            {
+                Vector3 savedPos = ball.position;
+                Quaternion savedRot = ball.orientation;
+                Vector3 savedVel = ball.velocity;
+                Vector3 savedAng = ball.angularVelocity;
+                ball.position = ball.Frames[FrameCount].Position;
+                ball.orientation = ball.Frames[FrameCount].Orientation;
+                ball.velocity = ball.Frames[FrameCount].Velocity;
+                ball.angularVelocity = ball.Frames[FrameCount].AngularVelocity;
+                float rotationalEnergy = ball.CalculateRotationalEnergy();
+                ball.position = savedPos;
+                ball.orientation = savedRot;
+                ball.velocity = savedVel;
+                ball.angularVelocity = savedAng;
+                return rotationalEnergy;
+            }
+            return ball.CalculateRotationalEnergy();
+        }
+
+        public float TotalEnergy()
+        {
+            if(useFrameByFrameMode)
+            {
+                Vector3 savedPos = ball.position;
+                Quaternion savedRot = ball.orientation;
+                Vector3 savedVel = ball.velocity;
+                Vector3 savedAng = ball.angularVelocity;
+                ball.position = ball.Frames[FrameCount].Position;
+                ball.orientation = ball.Frames[FrameCount].Orientation;
+                ball.velocity = ball.Frames[FrameCount].Velocity;
+                ball.angularVelocity = ball.Frames[FrameCount].AngularVelocity;
+                float totalEnergy = ball.CalculateTotalEnergy();
+                ball.position = savedPos;
+                ball.orientation = savedRot;
+                ball.velocity = savedVel;
+                ball.angularVelocity = savedAng;
+                return totalEnergy;
+            }
+            return ball.CalculateTotalEnergy();
+        }
     
-    private Vector3 CalculateMagnusForce(Vector3 velocity, Vector3 angularVelocity)
-    {
-        return airDensity * ballValues.liftCoefficient * Mathf.PI * Mathf.Pow(ballValues.radius, 3) *  Vector3.Cross(angularVelocity, velocity);
-    }
-
-    private Vector3 CalculateNormalForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
-    {
-        if(state == BallState.Bouncing)
-            return Vector3.zero;
-        
-        return (Gravity * ballValues.mass - CalculateMagnusForce(velocity, angularVelocity).y) * Vector3.up;
-    }
-
-    private Vector3 CalculateFrictionForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
-    {
-        if(state == BallState.Bouncing)
-            return Vector3.zero;
-
-        if(state == BallState.Sliding)
-        {
-            //sliding friction
-            Vector3 direction = (velocity - Vector3.Cross(angularVelocity * ballValues.radius, Vector3.up)).normalized;
-            _previousSignOfFriction = _frictionForce;
-            _frictionForce = -ballValues.mass * Gravity * ballValues.coefficientOfSlidingFriction * direction;
-        }
-        else
-        {
-            //rolling friction, pure rolling
-            _frictionForce = -ballValues.coefficientOfRollingFriction * ballValues.mass * Gravity * velocity.normalized;
-            _frictionForce.y = 0;
-        }
-        
-        return _frictionForce;
-    }
-    
-    private Vector3 CalculateTotalForces(Vector3 velocity, Vector3 angularVelocity, BallState state)
-    {
-        Vector3 dragForce = CalculateDragForce(velocity, angularVelocity);
-        Vector3 magnusForce = CalculateMagnusForce(velocity, angularVelocity);
-        Vector3 normalForce = CalculateNormalForce(ballValues.velocity, ballValues.angularVelocity, state);
-        Vector3 frictionForce = CalculateFrictionForce(velocity, angularVelocity, state);
-        Vector3 totalForces = Gravity * ballValues.mass * Vector3.down + dragForce + magnusForce + normalForce + frictionForce;
-
-        return totalForces;
-    }
+    #endregion
 }
 
 
-
-public enum IntegrationMethod
-{
-    VelocityVerlet,
-    ExplicitEuler,
-    RK2,
-    RK4
-}
 
 
