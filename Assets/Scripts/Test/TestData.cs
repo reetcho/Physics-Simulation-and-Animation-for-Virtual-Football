@@ -17,7 +17,7 @@ public class TestData
     
     public void SaveToJson(String filename)
     {
-        var path = "C:\\Users\\ricca\\Documents\\GitHub\\My project\\Assets\\Tests\\" + filename + ".json";
+        var path = "C:\\Users\\ricca\\Documents\\GitHub\\Controllable-Ball-Physics-Simulation\\Assets\\Tests\\" + filename + ".json";
         string json = JsonUtility.ToJson(this, true);
         File.WriteAllText(path, json);
         Debug.Log("Test data saved at: " + path);

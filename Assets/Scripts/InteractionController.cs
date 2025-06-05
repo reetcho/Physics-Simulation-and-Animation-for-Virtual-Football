@@ -358,7 +358,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
         simulationBall.position = ball.position;
         simulationBall.orientation = ball.orientation;
         simulationBall.velocity = direction * speed;
-        simulationBall.angularVelocity = targetRotation * new Vector3(spin.y, 0, 0) * ball.maximumSpinValue * 4f;
+        simulationBall.angularVelocity = targetRotation * new Vector3(spin.y, 0, 0) * ball.maximumSpinValue;
         simulationBall.angularVelocity.y = -spin.x * ball.maximumSpinValue;
         simulationBall.state = BallState.Bouncing;
         

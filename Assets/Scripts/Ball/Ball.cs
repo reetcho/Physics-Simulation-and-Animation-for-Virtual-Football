@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.Serialization;
 using Quaternion = UnityEngine.Quaternion;
 using Vector3 = UnityEngine.Vector3;
 
@@ -20,26 +21,29 @@ public class Ball : MonoBehaviour
         [Range(-1, 1)] public float coefficientOfHorizontalRestitution;
         [Range(0, 1)] public float coefficientOfVerticalAxisSpinRestitution; //percentage of angular velocity around y-axis that is preserved after the ball bounces on the ground
         
-        [Header("Friction force")]
+        [Header("Ground friction forces")]
         [Range(0, 1)] public float coefficientOfSlidingFriction;
         [Range(0, 1)] public float coefficientOfRollingFriction; 
         [Range(0, 1)] public float coefficientOfVerticalAxisSpinningFriction; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
         
-        [Header("Drag force and Magnus force")]
+        [Header("Air friction forces")]
         public float dragCoefficient;
-        //drag critical speed from laminar to turbulent
-        public float speedOfTransitionFromLaminarToTurbulentDrag;
-        //drag transition sharpness speed
-        public float dragTransitionSlope;
-        public bool useConstantDragCoefficient;
-        public float constantDragCoefficient;
         public float liftCoefficient;
+
+        //drag critical speed from laminar to turbulent
+        public float speedOfTransitionFromLaminarToTurbulentDrag = 12.19f;
+        //drag transition sharpness speed
+        public float dragTransitionSlope = 1.309f;
+        public float spinDecayCoefficient;
+        
+        public bool useConstantCoefficients;
+        public float constantDragCoefficient;
+        public float constantLiftCoefficient;
         
         [Header("Other")]
         public Vector3 resetPosition;
         public float maximumSpinValue = 30f;
         
-        //TODO spostare fuori 
         public Frame[] Frames { get; private set; } = new Frame[1000];
         public int NewestFrameIndex { get; private set; }
         public int OldestFrameIndex { get; private set; }

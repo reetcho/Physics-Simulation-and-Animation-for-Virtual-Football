@@ -12,14 +12,10 @@ public class BallPhysics : MonoBehaviour
 {
     #region Variables
         public Ball ball;
-
-        public int totalIterations;
-        public float averageIterations = 0;
-        public int numberOfTimeTRajWasCalled = 0;
         
         [Header("Constants")]
         [SerializeField] private float airDensity = 1.2f;
-        [SerializeField] private float kinematicViscosityOfAir = 1.48f * 1e-5f;
+        [SerializeField] private float dynamicViscosityOfAir = 1.81f * 1e-5f;
         public static readonly float Gravity = 9.81f; 
         private const float BinarySearchThreshold = 1e-6f;
         
@@ -57,6 +53,7 @@ public class BallPhysics : MonoBehaviour
             Application.targetFrameRate = -1;
             Time.fixedDeltaTime = 1/framePerSecond;
         }
+        
         void FixedUpdate()
         {
             if (useFrameByFrameMode)
@@ -129,13 +126,18 @@ public class BallPhysics : MonoBehaviour
             if (state != BallState.Sliding)
                 return state;
             
+            //inclination in of the ball axis against the up-axis in radians
+            float currentTheta = Vector3.Angle(currentAngularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+            float previousTheta = Vector3.Angle(previousAngularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+            
             //compute the velocity of the contact point of the current and the previous frames
-            float currentContactPointVelocity = (currentVelocity - Vector3.Cross(currentAngularVelocity * ball.radius, Vector3.up)).magnitude;
-            float previousContactPointVelocity = (previousVelocity - Vector3.Cross(previousAngularVelocity * ball.radius, Vector3.up)).magnitude;
+            float currentContactPointSpeed = (currentVelocity - Vector3.Cross(currentAngularVelocity, ball.radius * Mathf.Sin(currentTheta) * Vector3.up)).magnitude;
+            
+            float previousContactPointSpeed = (previousVelocity - Vector3.Cross(previousAngularVelocity, ball.radius * Mathf.Sin(previousTheta) * Vector3.up)).magnitude;
             
             //the state is set to rolling when the current contact point velocity becomes greater than the previous, meaning that it reached the minimum
             //this is done in this way because after this point the contact point velocity oscillating between -epsilon and +epsilon, resulting in an infinite cycle due to numerical error (HEURISTIC)
-            if(currentContactPointVelocity > previousContactPointVelocity)
+            if(currentContactPointSpeed > previousContactPointSpeed || Mathf.Abs(currentContactPointSpeed - previousContactPointSpeed) < 1e-5)
                 state = BallState.Rolling;
             
             return state;
@@ -413,19 +415,10 @@ public class BallPhysics : MonoBehaviour
             private Vector3 ComputeAirResistanceForce(Vector3 velocity, Vector3 angularVelocity)
             {
                 // this part computes the drag force based on the paper "Flight and bounce of spinning sports balls"
-                if(!ball.useConstantDragCoefficient)
+                if(!ball.useConstantCoefficients)
                 {
                     //spin rate parameter, how strong the spin is compared to the speed
                     float s = angularVelocity.magnitude * ball.radius / velocity.magnitude;
-                    
-                    //current speed Reynolds number
-                    float re = velocity.magnitude * 2*ball.radius / kinematicViscosityOfAir;
-                    
-                    //the point where the drag coefficient starts dropping
-                    float reC = ball.speedOfTransitionFromLaminarToTurbulentDrag * 2*ball.radius / kinematicViscosityOfAir;
-                    
-                    //controls how fast the drag coefficient drops around Rec
-                    float reS = ball.dragTransitionSlope * 2*ball.radius / kinematicViscosityOfAir;
 
                     //if the ball is spinning fast enough and moving faster than critical speed
                     //use the formula where drag decreases with spin rate
@@ -435,43 +428,59 @@ public class BallPhysics : MonoBehaviour
                     //otherwise use the drag coefficient model depending on Reynolds numbers
                     else
                         //TODO explain values
-                        ball.dragCoefficient = 0.155f + 0.346f / (1 + Mathf.Exp((re - reC) / reS));
-                }
-                //otherwise use constant linear drag coefficient
-                else
-                {
-                    ball.dragCoefficient = ball.constantDragCoefficient;
+                        ball.dragCoefficient = 0.155f + 0.346f / (1 + Mathf.Exp((velocity.magnitude - ball.speedOfTransitionFromLaminarToTurbulentDrag) / ball.dragTransitionSlope));
+                    
+                    return - 0.5f * airDensity * ball.dragCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * velocity.magnitude * velocity;
                 }
                 
-                //formula
-                return - 0.5f * airDensity * ball.dragCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * velocity.magnitude * velocity;
+                //otherwise use constant linear drag coefficient
+                return - 0.5f * airDensity * ball.constantDragCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * velocity.magnitude * velocity;
             }
             
-            //this method computes the magnus force given the velocity and the angular velocity
+            
             private Vector3 ComputeMagnusForce(Vector3 velocity, Vector3 angularVelocity)
             {
-                return airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 3) * Vector3.Cross(angularVelocity, velocity);
-            }
-            
-            //this method computes the normal force
-            private Vector3 CalculateNormalForce(Vector3 velocity, Vector3 angularVelocity)
-            {
-                //takes into account the vertical component of the magnus force
-                return (Gravity * ball.mass - ComputeMagnusForce(velocity, angularVelocity).y) * Vector3.up;
+                if(velocity.magnitude < 1e-4)
+                    return Vector3.zero;
+                
+                //direction cross product
+                Vector3 direction = Vector3.Cross(angularVelocity.normalized, velocity.normalized);
+                
+                if(!ball.useConstantCoefficients)
+                {
+                    //spin rate parameter, how strong the spin is compared to the speed
+                    float s = angularVelocity.magnitude * ball.radius / velocity.magnitude;
+                    
+                    float cdRe0 = 0.155f + 0.346f / (1 + Mathf.Exp(-ball.speedOfTransitionFromLaminarToTurbulentDrag) / ball.dragTransitionSlope);
+                    float cdReRef = 0.155f;
+
+                    ball.liftCoefficient = 1.15f * Mathf.Pow(s, 0.83f) * (cdRe0 -  ball.dragCoefficient) / (cdRe0 - cdReRef);
+
+                    return 0.5f * airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
+                }
+                
+                //otherwise use constant linear drag coefficient
+                return 0.5f * airDensity * ball.constantLiftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
             }
             
             //this method computes this friction force with the ground, given the velocity, the angular velocity and the current state of the ball
             private Vector3 CalculateFrictionForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
+                if(state == BallState.Bouncing)
+                    return Vector3.zero; 
+                
                 Vector3 frictionForce;
                 
                 //if the ball is sliding, use the sliding friction formula
                 if(state == BallState.Sliding)
                 {
-                    //compute direction of the velocity of the contact point
-                    Vector3 direction = (velocity - Vector3.Cross(angularVelocity * ball.radius, Vector3.up)).normalized;
+                    //inclination in of the ball axis against the up-axis in radians
+                    float theta = Vector3.Angle(angularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
                     
-                    frictionForce = -ball.mass * Gravity * ball.coefficientOfSlidingFriction * direction;
+                    //compute direction of the velocity of the contact point
+                    Vector3 frictionDirection = (velocity - Vector3.Cross(angularVelocity, ball.radius * Mathf.Sin(theta) * Vector3.up)).normalized;
+                    
+                    frictionForce = -ball.mass * Gravity * ball.coefficientOfSlidingFriction * frictionDirection;
                 }
                 //otherwise, rolling friction formula
                 else
@@ -486,14 +495,14 @@ public class BallPhysics : MonoBehaviour
             //this method computes the result of the sum of all forces acting on the ball
             private Vector3 CalculateTotalForces(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                Vector3 gravitationalForce = Gravity * ball.mass * Vector3.down;
+                Vector3 gravitationalForce = state == BallState.Bouncing ? Gravity * ball.mass * Vector3.down : Vector3.zero;
+                Vector3 buoyantForce = state == BallState.Bouncing ? 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up : Vector3.zero;
                 Vector3 dragForce = ComputeAirResistanceForce(velocity, angularVelocity);
                 Vector3 magnusForce = ComputeMagnusForce(velocity, angularVelocity);
-                Vector3 normalForce = state == BallState.Bouncing ? Vector3.zero : CalculateNormalForce(ball.velocity, ball.angularVelocity);
-                Vector3 frictionForce = state == BallState.Bouncing ? Vector3.zero : CalculateFrictionForce(velocity, angularVelocity, state);
+                Vector3 frictionForce = CalculateFrictionForce(velocity, angularVelocity, state);
                 
                 //sum all forces
-                Vector3 totalForces = gravitationalForce + dragForce + magnusForce + normalForce + frictionForce;
+                Vector3 totalForces = gravitationalForce + buoyantForce + dragForce + magnusForce + frictionForce;
 
                 return totalForces;
             }
@@ -501,6 +510,9 @@ public class BallPhysics : MonoBehaviour
             //this method computes the torque acting on the ball created by the friction with the ground, given velocity, angular velocity and the state of the ball
             private Vector3 CalculateFrictionTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
             { 
+                if(state == BallState.Bouncing)
+                    return Vector3.zero;
+                
                 //component of the friction around y-axis to simulate the reduction of rotation around the vertical axis
                 Vector3 frictionTorque = new Vector3(0, - ball.mass * Gravity * ball.coefficientOfVerticalAxisSpinningFriction * angularVelocity.y, 0) * ball.InertialMomentum;
                 
@@ -508,8 +520,12 @@ public class BallPhysics : MonoBehaviour
                 if (state == BallState.Rolling)
                     return frictionTorque;
                 
-                //computes direction of the friction torque vector
-                Vector3 direction = -(angularVelocity + Vector3.Cross(velocity, Vector3.up) / ball.radius).normalized;
+                //inclination in of the ball axis against the up-axis in radians
+                float theta = Vector3.Angle(angularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+                    
+                //compute direction of the velocity of the contact point
+                Vector3 frictionDirection = velocity - Vector3.Cross(angularVelocity, ball.radius * Mathf.Sin(theta) * Vector3.up);
+                Vector3 direction = Vector3.Cross(Vector3.up, frictionDirection).normalized;
                 
                 Vector3 angularAcceleration =  ball.mass * ball.coefficientOfSlidingFriction * Gravity * ball.radius / ball.InertialMomentum * direction;
 
@@ -518,11 +534,47 @@ public class BallPhysics : MonoBehaviour
                 return frictionTorque;
             }
             
+            //this method computes the torque acting on the ball created by the friction with the air that cause spin decay during the flight, given velocity, angular velocity and the state of the ball
+            /*private Vector3 CalculateDragTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            { 
+                if(state != BallState.Bouncing)
+                    return Vector3.zero;
+                
+                Vector3 spinDecayTorque = - ball.spinDecayCoefficient * velocity.magnitude * ball.InertialMomentum * angularVelocity;
+                
+                return spinDecayTorque;
+            }*/
+            
+            
+            private Vector3 CalculateDragTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            {
+                if(state != BallState.Bouncing || angularVelocity.magnitude < 1e-3)
+                    return Vector3.zero;
+                
+                float utP = Vector3.Cross(velocity, angularVelocity.normalized).magnitude + ball.radius/2 * angularVelocity.magnitude;
+                float utM = Vector3.Cross(velocity, angularVelocity.normalized).magnitude - ball.radius/2 * angularVelocity.magnitude;
+
+                float kinematicViscosityOfAir = dynamicViscosityOfAir * airDensity;
+                
+                float cfP = 0.0074f * Mathf.Pow(utP * airDensity * ball.radius * 2 / kinematicViscosityOfAir, -1f / 5f);
+                float cfM = 0.0074f * Mathf.Pow(utM * airDensity * ball.radius * 2 / kinematicViscosityOfAir, -1f / 5f);
+                
+                //this was added to handle cases when cfP and cfM are too small, therefore become NaN
+                if(float.IsNaN(cfP) || float.IsNaN(cfM))
+                    return Vector3.zero;
+                
+                float totalForce = airDensity * Mathf.PI * Mathf.Pow(ball.radius, 2) * (Mathf.Pow(utP, 2) * cfP + Mathf.Pow(utM, 2) * cfM);
+                
+                return - totalForce * ball.radius / 2 * angularVelocity.normalized;
+            }
+            
+            
             //this method computes the result of the sum of all torques acting on the ball
             private Vector3 CalculateTotalTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                Vector3 frictionTorque = state == BallState.Bouncing ? Vector3.zero : CalculateFrictionTorque(velocity, angularVelocity, state);
-                Vector3 totalTorque = frictionTorque;
+                Vector3 frictionTorque = CalculateFrictionTorque(velocity, angularVelocity, state);
+                Vector3 airFrictionTorque = CalculateDragTorque(velocity, angularVelocity, state);
+                Vector3 totalTorque = frictionTorque + airFrictionTorque;
                 
                 return totalTorque;
             }
@@ -832,10 +884,6 @@ public class BallPhysics : MonoBehaviour
         //the method returns the closest point of the trajectory to the target and the closest point to the constraint
         private (Vector3,Vector3) ComputeTrajectoryPathToTarget(float deltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity,  Vector3 initialAngularVelocity, Vector3 targetPosition, bool constraintShot, Vector3 constraintPosition = default)
         {
-            float startTime = Time.realtimeSinceStartup;
-
-            int iterations = 0;
-            
             bool stopSimulation = false;
             bool foundClosestConstraintPoint = false;
 
@@ -857,8 +905,6 @@ public class BallPhysics : MonoBehaviour
             float previousConstraintError = Vector3.Distance(currentPosition, constraintPosition);
             while(!stopSimulation)
             {
-                iterations++;
-                
                 //integrate the next step on the motion
                 (Vector3 newPosition, Quaternion newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, currentPosition,  currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing);
                 _currentTrajectory.Add(newPosition);
@@ -917,15 +963,7 @@ public class BallPhysics : MonoBehaviour
                 currentAngularVelocity = newAngularVelocity;
                 currentOrientation = newOrientation;
             }
-
-            totalIterations += iterations;
-            numberOfTimeTRajWasCalled++;
-            averageIterations = (float)totalIterations / numberOfTimeTRajWasCalled;
-
-            float totalTime = (Time.realtimeSinceStartup - startTime) * 1e3f;
-
-            if(totalTime > 5)
-                Debug.Log("Too much: " + totalTime + "with iterations: " + iterations);
+            
             return (targetClosestPoint, constraintClosestPoint);
         }
         
@@ -1005,8 +1043,6 @@ public class BallPhysics : MonoBehaviour
             _testData.description = description;
             _testData.SaveToJson(fileName);
             _testRunning = false;
-
-            StartTestForTargetedKick(description, fileName, testSteps, testStartPosition, testEndPosition, speed, spin);
         }
 
         //if no other test is running, starts the coroutine to run a new test
@@ -1032,9 +1068,15 @@ public class BallPhysics : MonoBehaviour
             //at each step the speed is increased gradually from the start speed to the end speed
             while (currentTestStep < testSteps)
             {
-                _precalculationTrajectories.Clear();
                 testInitialSpeed += speedIncrement;
-                FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1/framePerSecond, targetPosition, constraintPosition, initialPosition, testInitialSpeed, maxIterations, true);
+
+                int multiIterationCounter = 0;
+                while(multiIterationCounter < 9)
+                {
+                    _precalculationTrajectories.Clear();
+                    FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1 / framePerSecond, targetPosition, constraintPosition, initialPosition, testInitialSpeed, maxIterations, true);
+                    multiIterationCounter++;
+                }
                 
                 currentTestStep++;
 
@@ -1256,15 +1298,7 @@ public class BallPhysics : MonoBehaviour
             }
             return ComputeMagnusForce(ball.velocity, ball.angularVelocity);
         }
-
-        public Vector3 NormalForce()
-        {
-            if(useFrameByFrameMode)
-            {
-                return CalculateNormalForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity);
-            }
-            return CalculateNormalForce(ball.velocity, ball.angularVelocity);
-        }
+    
 
         public Vector3 FrictionForce()
         {
@@ -1282,6 +1316,15 @@ public class BallPhysics : MonoBehaviour
                 return CalculateFrictionTorque(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
             }
             return CalculateFrictionTorque(ball.velocity, ball.angularVelocity, ball.state);
+        }
+        
+        public Vector3 DragTorque()
+        {
+            if(useFrameByFrameMode)
+            {
+                return CalculateDragTorque(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
+            }
+            return CalculateDragTorque(ball.velocity, ball.angularVelocity, ball.state);
         }
         
         public Vector3 TotalTorque()
