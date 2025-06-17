@@ -364,7 +364,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
         
         for (int i = 0; i < 15; i++)
         {
-            ballPhysics.UpdateBallDynamics(deltaTime, simulationBall);
+            ballPhysics.ComputeNewFrame(deltaTime, simulationBall);
             kickTrajectory.Add(simulationBall.position);
         }
         

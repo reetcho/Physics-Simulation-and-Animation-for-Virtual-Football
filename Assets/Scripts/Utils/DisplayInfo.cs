@@ -75,7 +75,7 @@ public class DisplayInfo
         GUI.Label(totalTorques, "Total torques: " + _ballPhysics.TotalTorque() + " mN * m", textStyle);
         
         textStyle.normal.textColor = Color.black;
-        GUI.Label(timeToCompute, "Time to compute: " +  _ballPhysics.TimeToCompute() * 1e6f + " μs", textStyle);
+        GUI.Label(timeToCompute, "Time to compute: " +  _ballPhysics.TimeToCompute() * 1e3f + " μs", textStyle);
         
         Handles.EndGUI();
     }

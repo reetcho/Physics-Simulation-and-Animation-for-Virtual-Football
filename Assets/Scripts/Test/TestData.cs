@@ -13,7 +13,7 @@ public class TestData
     public List<float> initialSpeeds = new List<float>();
     public List<float> zSpin = new List<float>();
     public List<float> ySpin = new List<float>();
-    public List<float> computationTime = new List<float>();
+    public List<double> computationTime = new List<double>();
     
     public void SaveToJson(String filename)
     {

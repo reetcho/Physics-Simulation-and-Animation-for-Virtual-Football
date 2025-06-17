@@ -111,7 +111,7 @@ public class Ball : MonoBehaviour
     #region Utils
         private void CheckIsMoving()
         {
-            if (CalculateTotalEnergy() < 1e-4)
+            if (CalculateTotalEnergy() < 1e-3 && CalculateRotationalEnergy() < 1e-5)
             {
                 ResetValues();
             }
@@ -135,7 +135,7 @@ public class Ball : MonoBehaviour
             state = BallState.Stopped;
         }
         
-        public void AddTrajectoryFrame(float timeToComputeFrame = 0f)
+        public void AddTrajectoryFrame(double timeToComputeFrame = 0f)
         {
             if (state != BallState.Stopped)
             {

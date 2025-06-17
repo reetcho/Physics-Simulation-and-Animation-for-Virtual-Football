@@ -46,15 +46,18 @@ public class Test : MonoBehaviour
     {
         if (Application.isPlaying)
         {
-            PositionList positionList = new PositionList();
+            FrameList frameList = new FrameList();
             
             for(int i = 0; i < ball.Frames.Length; i++)
             {
                 if(ball.Frames[i] != null)
-                    positionList.positions.Add(ball.Frames[i].Position);
+                {
+                    frameList.positions.Add(ball.Frames[i].Position);
+                    frameList.computationTimes.Add(ball.Frames[i].TimeToCompute);
+                }
             }
             var path = "C:\\Users\\ricca\\Documents\\GitHub\\Controllable-Ball-Physics-Simulation\\Assets\\Tests\\" + fileName + ".json";
-            string json = JsonUtility.ToJson(positionList, true);
+            string json = JsonUtility.ToJson(frameList, true);
             File.WriteAllText(path, json);
             Debug.Log("Test data saved at: " + path);
         }
@@ -95,7 +98,8 @@ public class MyComponentEditor : Editor
     }
 }
 
-public class PositionList
+public class FrameList
 {
     public List<Vector3> positions = new List<Vector3>();
+    public List<double> computationTimes = new List<double>();
 }

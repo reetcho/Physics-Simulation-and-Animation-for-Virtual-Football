@@ -7,10 +7,10 @@ public class Frame
     public Vector3 Velocity { get; private set; }
     public Vector3 AngularVelocity { get; private set; }
     public BallState State { get; private set; }
-    public float TimeToCompute { get; private set; }
+    public double TimeToCompute { get; private set; }
 
 
-    public Frame(Vector3 position, Quaternion orientation,Vector3 velocity, Vector3 angularVelocity, BallState state, float timeToCompute)
+    public Frame(Vector3 position, Quaternion orientation,Vector3 velocity, Vector3 angularVelocity, BallState state, double timeToCompute)
     {
         Position = position;
         Orientation = orientation;

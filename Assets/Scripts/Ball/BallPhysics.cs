@@ -1,9 +1,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 using Quaternion = UnityEngine.Quaternion;
+using SysQuat = System.Numerics.Quaternion;
 using Random = System.Random;
 using Vector2 = UnityEngine.Vector2;
 using Vector3 = UnityEngine.Vector3;
@@ -17,7 +20,9 @@ public class BallPhysics : MonoBehaviour
         [SerializeField] private float airDensity = 1.2f;
         [SerializeField] private float dynamicViscosityOfAir = 1.81f * 1e-5f;
         public static readonly float Gravity = 9.81f; 
-        private const float BinarySearchThreshold = 1e-6f;
+        private const float CollisionThreshold = 1e-6f;
+        private Vector3 _gravitationalForce;
+        private Vector3 _buoyantForce;
         
         [Header("Simulation")]
         [SerializeField] private IntegrationMethod integrationMethod;
@@ -41,7 +46,7 @@ public class BallPhysics : MonoBehaviour
         [SerializeField] private GameObject closestPointToConstraintPlaceholder;
         private readonly List<List<Vector3>> _precalculationTrajectories = new List<List<Vector3>>();
         private List<Vector3> _currentTrajectory;
-        private float _timeToComputeFrame;
+        private double _timeToComputeFrame;
         private TestData _testData;
         private bool _testRunning;
         
@@ -52,6 +57,13 @@ public class BallPhysics : MonoBehaviour
         {
             Application.targetFrameRate = -1;
             Time.fixedDeltaTime = 1/framePerSecond;
+        }
+
+        void Update()
+        {
+            Time.fixedDeltaTime = 1/framePerSecond;
+            _gravitationalForce = Gravity * ball.mass * Vector3.down;
+            _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up;
         }
         
         void FixedUpdate()
@@ -65,10 +77,7 @@ public class BallPhysics : MonoBehaviour
             if (ball.state == BallState.Stopped)
                 return;
             
-            float startTime = Time.realtimeSinceStartup;
-            UpdateBallDynamics(Time.fixedDeltaTime, ball);
-            float endTime = Time.realtimeSinceStartup;
-            _timeToComputeFrame = endTime - startTime;
+            ComputeNewFrame(Time.fixedDeltaTime, ball);
 
             ball.AddTrajectoryFrame(_timeToComputeFrame);
         }
@@ -80,25 +89,33 @@ public class BallPhysics : MonoBehaviour
     #endregion
     
     #region Simulation
-        public void UpdateBallDynamics(float deltaTime, Ball targetBall)
+        public void ComputeNewFrame(float deltaTime, Ball targetBall)
         {
             //given the current state of the ball, the motion is integrated and the new state of the ball after delta time is returned
+            Stopwatch stopwatch = Stopwatch.StartNew();
             (Vector3 newPosition, Quaternion newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, targetBall.position, targetBall.orientation, targetBall.velocity, targetBall.angularVelocity, targetBall.state);
-            
+            stopwatch.Stop();
+            _timeToComputeFrame = stopwatch.Elapsed.TotalMilliseconds;
+
+
             //checks if there was a collision and if so handles it
             if (newPosition.y - targetBall.radius < 0f)
             {
                 (newPosition, newOrientation, newVelocity, newAngularVelocity, targetBall.state) = HandleGroundCollisionAndBounce(deltaTime, targetBall.position, targetBall.orientation, targetBall.velocity, targetBall.angularVelocity, targetBall.state);
             }
-            
-            //checks if the ball is a pure rolling state
-            targetBall.state = CheckPureRolling(targetBall.state, newVelocity, newAngularVelocity, targetBall.velocity, targetBall.angularVelocity);
+
+            Vector3 previousVelocity = targetBall.velocity;
+            Vector3 previousAngularVelocity = targetBall.angularVelocity;
             
             //updates the state of the ball
             targetBall.position = newPosition;
             targetBall.orientation = newOrientation;
             targetBall.velocity = newVelocity;
             targetBall.angularVelocity = newAngularVelocity;
+            
+            //checks if the ball is a pure rolling state
+            if(ball.state == BallState.Sliding)
+                targetBall.state = CheckPureRolling(targetBall.state, newVelocity, newAngularVelocity, previousVelocity, previousAngularVelocity);
         }
         
         //this method chooses one of the four integration method to compute the new state of the ball after delta time
@@ -106,10 +123,12 @@ public class BallPhysics : MonoBehaviour
         {
             switch (integrationMethod)
             {
-                case IntegrationMethod.VelocityVerlet:
-                    return VelocityVerlet(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
                 case IntegrationMethod.ExplicitEuler:
                     return ExplicitEuler(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+                case IntegrationMethod.SemiImplicitEuler:
+                    return SemiImplicitEuler(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
+                case IntegrationMethod.VelocityVerlet:
+                    return VelocityVerlet(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
                 case IntegrationMethod.Rk2:
                     return Runge_Kutta_2(deltaTime, initialPosition, initialOrientation, initialVelocity,initialAngularVelocity, state);
                 case IntegrationMethod.Rk4:
@@ -122,223 +141,169 @@ public class BallPhysics : MonoBehaviour
         //this method checks the pure rolling condition (HEURISTIC)
         private BallState CheckPureRolling(BallState state, Vector3 currentVelocity, Vector3 currentAngularVelocity, Vector3 previousVelocity, Vector3 previousAngularVelocity)
         {
-            //if the ball is not sliding it means that it is either bouncing or it is already rolling, therefore returns the current given state
-            if (state != BallState.Sliding)
-                return state;
-            
             //inclination in of the ball axis against the up-axis in radians
-            float currentTheta = Vector3.Angle(currentAngularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
-            float previousTheta = Vector3.Angle(previousAngularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+            float currentTheta = (90f - Vector3.Angle(currentAngularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
+            float previousTheta = (90f - Vector3.Angle(previousAngularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
             
             //compute the velocity of the contact point of the current and the previous frames
-            float currentContactPointSpeed = (currentVelocity - Vector3.Cross(currentAngularVelocity, ball.radius * Mathf.Sin(currentTheta) * Vector3.up)).magnitude;
+            float currentContactPointSpeed = (currentVelocity + Vector3.Cross(ball.radius * Mathf.Cos(currentTheta) * Vector3.up, currentAngularVelocity)).magnitude;
             
-            float previousContactPointSpeed = (previousVelocity - Vector3.Cross(previousAngularVelocity, ball.radius * Mathf.Sin(previousTheta) * Vector3.up)).magnitude;
+            float previousContactPointSpeed = (previousVelocity + Vector3.Cross(ball.radius * Mathf.Cos(previousTheta) * Vector3.up, previousAngularVelocity)).magnitude;
             
             //the state is set to rolling when the current contact point velocity becomes greater than the previous, meaning that it reached the minimum
             //this is done in this way because after this point the contact point velocity oscillating between -epsilon and +epsilon, resulting in an infinite cycle due to numerical error (HEURISTIC)
-            if(currentContactPointSpeed > previousContactPointSpeed || Mathf.Abs(currentContactPointSpeed - previousContactPointSpeed) < 1e-5)
+            if(currentContactPointSpeed > previousContactPointSpeed || currentContactPointSpeed < 1e-3)
+            {
+                ball.angularVelocity = -Vector3.Cross(currentVelocity, Vector3.up) / ball.radius + Vector3.up * currentAngularVelocity.y;
                 state = BallState.Rolling;
+            }
             
             return state;
         }
         
         #region Integration Methods
+        
+            private (Vector3, Quaternion, Vector3, Vector3) ExplicitEuler(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                SysQuat numericsInitialOrientation = QuaternionUtils.ToNumerics(initialOrientation);
+                
+                //computes the acceleration/angular acceleration based on current state
+                (Vector3 acceleration, Vector3 angularAcceleration) = CalculateAccelerationAndAngularAcceleration(initialVelocity, initialAngularVelocity, state);
+                        
+                //full step velocity/angular velocity update
+                Vector3 newVelocity = initialVelocity + deltaTime * acceleration;
+                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * angularAcceleration;
+                        
+                //full step position/orientation update
+                Vector3 newPosition = initialPosition + deltaTime * initialVelocity;
+                Quaternion newOrientation = QuaternionUtils.ToUnity(SysQuat.Add(numericsInitialOrientation, QuaternionUtils.QuaternionDerivative(numericsInitialOrientation, initialAngularVelocity * deltaTime)));
+
+                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
+            }
+            
+            private (Vector3, Quaternion, Vector3, Vector3) SemiImplicitEuler(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            {
+                SysQuat numericsInitialOrientation = QuaternionUtils.ToNumerics(initialOrientation);
+                
+                //computes the acceleration/angular acceleration based on current state
+                (Vector3 acceleration, Vector3 angularAcceleration) = CalculateAccelerationAndAngularAcceleration(initialVelocity, initialAngularVelocity, state);
+                    
+                //full step velocity/angular velocity update
+                Vector3 newVelocity = initialVelocity + deltaTime * acceleration;
+                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * angularAcceleration;
+                    
+                //full step position/orientation update
+                Vector3 newPosition = initialPosition + deltaTime * newVelocity;
+                Quaternion newOrientation = QuaternionUtils.ToUnity(SysQuat.Add(numericsInitialOrientation, QuaternionUtils.QuaternionDerivative(numericsInitialOrientation, newAngularVelocity * deltaTime)));
+                
+                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
+            }
+            
             private (Vector3, Quaternion, Vector3, Vector3) VelocityVerlet(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state) 
             {
+                SysQuat numericsInitialOrientation = QuaternionUtils.ToNumerics(initialOrientation);
+                
                  //computes the acceleration/angular acceleration based on current state
-                 Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
-                 Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
+                 (Vector3 acceleration, Vector3 angularAcceleration) = CalculateAccelerationAndAngularAcceleration(initialVelocity, initialAngularVelocity, state);
 
                  //first half-step velocity/angular velocity update
                  Vector3 newVelocity = initialVelocity + deltaTime/2 * acceleration;
                  Vector3 newAngularVelocity = initialAngularVelocity + deltaTime/2 * angularAcceleration;
-                 
-                 //if ball is rolling, constrain angular velocity to match pure rolling condition
-                 if(state == BallState.Rolling)
-                 {
-                     float y = newAngularVelocity.y;
-                     newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
-                     newAngularVelocity.y = y;
-                 }
-                 
+
                  //full step position/orientation update
                  Vector3 newPosition = initialPosition + deltaTime * newVelocity;
-                 Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
-
+                 Quaternion newOrientation = QuaternionUtils.ToUnity(SysQuat.Add(numericsInitialOrientation, QuaternionUtils.QuaternionDerivative(numericsInitialOrientation, newAngularVelocity * deltaTime)));
+                
                  //the acceleration/angular acceleration based on new half-step state
-                 acceleration = CalculateTotalForces(newVelocity, newAngularVelocity, state) / ball.mass;
-                 angularAcceleration = CalculateTotalTorque(newVelocity, newAngularVelocity, state) / ball.InertialMomentum;
+                 (acceleration, angularAcceleration) = CalculateAccelerationAndAngularAcceleration(newVelocity, newAngularVelocity, state);
 
                  //second half-step velocity/angular velocity update
                  newVelocity += deltaTime/2 * acceleration;
                  newAngularVelocity += deltaTime/2 * angularAcceleration;
 
-                 //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
-                 if (state != BallState.Bouncing && state != BallState.Stopped)
-                 {
-                     newPosition.y = ball.radius;
-
-                     //if ball is rolling, constrain angular velocity to match pure rolling condition
-                     if (state == BallState.Rolling)
-                     {
-                         float y = newAngularVelocity.y;
-                         newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
-                         newAngularVelocity.y = y;
-                     }
-                 }
-
                  return (newPosition, newOrientation, newVelocity, newAngularVelocity);
             }
-            private (Vector3, Quaternion, Vector3, Vector3) ExplicitEuler(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
-            {
-                //computes the acceleration/angular acceleration based on current state
-                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
-                Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
-                
-                //full step velocity/angular velocity update
-                Vector3 newVelocity = initialVelocity + deltaTime * acceleration;
-                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * angularAcceleration;
-                
-                //full step position/orientation update
-                Vector3 newPosition = initialPosition + deltaTime * newVelocity;
-                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
-                
-                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
-                if (state != BallState.Bouncing && state != BallState.Stopped)
-                {
-                    newPosition.y = ball.radius;
-
-                    //if ball is rolling, constrain angular velocity to match pure rolling condition
-                    if (state == BallState.Rolling)
-                    {
-                        float y = newAngularVelocity.y;
-                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
-                        newAngularVelocity.y = y;
-                    }
-                }
-
-                return (newPosition, newOrientation, newVelocity, newAngularVelocity);
-            }
+            
             private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_2(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
-                //compute slope for velocity and position at the start of the interval
-                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
-                Vector3 k1V = deltaTime * acceleration;
-                Vector3 k1P = deltaTime * initialVelocity;
+                SysQuat numericsInitialOrientation = QuaternionUtils.ToNumerics(initialOrientation);
                 
-                //compute slope for angular velocity and orientation at the start of the interval
-                Vector3 angularAcceleration =  CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
-                Vector3 k1W = deltaTime * angularAcceleration;
-                Vector3 k1T = deltaTime * initialAngularVelocity;
+                //K1
+                (Vector3 k1V, Vector3 k1W) = CalculateAccelerationAndAngularAcceleration(initialVelocity, initialAngularVelocity, state);
+                SysQuat k1T = QuaternionUtils.QuaternionDerivative(numericsInitialOrientation, initialAngularVelocity);
+                //K1P not computed since it doesn't influence the result neither directly nor indirectly through K2
                 
-                //compute slope for velocity and position at midpoint of the interval using k1
-                acceleration = CalculateTotalForces(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ball.mass;
-                Vector3 k2V = deltaTime * acceleration;
-                Vector3 k2P = deltaTime * (initialVelocity + k1V);
+                //K2
+                (Vector3 k2V, Vector3 k2W) = CalculateAccelerationAndAngularAcceleration(initialVelocity + deltaTime * k1V / 2, initialAngularVelocity + deltaTime * k1W / 2, state);
+                Vector3 k2P = initialVelocity + k1V * deltaTime / 2;
+                SysQuat k2T = QuaternionUtils.QuaternionDerivative(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(k1T, deltaTime/2)), initialAngularVelocity + deltaTime * k1W / 2);
+           
+                //update velocity and position
+                Vector3 newPosition = initialPosition + deltaTime * k2P;
+                Vector3 newVelocity = initialVelocity + deltaTime * k2V;
                 
-                //compute slope for angular velocity and orientation at midpoint of the interval using k1
-                angularAcceleration = CalculateTotalTorque(initialVelocity + k1V, initialAngularVelocity + k1W, state) / ball.InertialMomentum;
-                Vector3 k2W = deltaTime * angularAcceleration;
-                Vector3 k2T = deltaTime * (initialAngularVelocity + k1W);
+                //update angular velocity and orientation 
+                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * k2W;
+                Quaternion newOrientation = QuaternionUtils.ToUnity(SysQuat.Normalize(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(k2T, deltaTime))));
+               
                 
-                //update velocity and position using the average of k1 and k2
-                Vector3 newPosition = initialPosition + (k1P + k2P) / 2;
-                Vector3 newVelocity = initialVelocity + (k1V + k2V) / 2;
-                
-                //update angular velocity and orientation using the average of k1 and k2
-                Vector3 newAngularVelocity = initialAngularVelocity + (k1W + k2W) / 2;
-                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + k2T) / 2) * initialOrientation;
-
-                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
-                if (state != BallState.Bouncing && state != BallState.Stopped)
-                {
-                    newPosition.y = ball.radius;
-
-                    //if ball is rolling, constrain angular velocity to match pure rolling condition
-                    if (state == BallState.Rolling)
-                    {
-                        float y = newAngularVelocity.y;
-                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
-                        newAngularVelocity.y = y;
-                        newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
-                    }
-                }
-
                 return (newPosition, newOrientation, newVelocity, newAngularVelocity);
             }
+            
             private (Vector3, Quaternion, Vector3, Vector3) Runge_Kutta_4(float deltaTime,Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
-                //compute slope for velocity and position at the start of the interval
-                Vector3 acceleration = CalculateTotalForces(initialVelocity, initialAngularVelocity, state) / ball.mass;
-                Vector3 k1V = deltaTime * acceleration;
-                Vector3 k1P = deltaTime * initialVelocity;
+                SysQuat numericsInitialOrientation = QuaternionUtils.ToNumerics(initialOrientation);
                 
-                //compute slope for angular velocity and orientation at the start of the interval
-                Vector3 angularAcceleration = CalculateTotalTorque(initialVelocity, initialAngularVelocity, state) / ball.InertialMomentum;
-                Vector3 k1W = deltaTime * angularAcceleration;
-                Vector3 k1T = deltaTime * initialAngularVelocity;
+                //K1
+                (Vector3 k1V, Vector3 k1W) = CalculateAccelerationAndAngularAcceleration(initialVelocity, initialAngularVelocity, state);
+                Vector3 k1P = initialVelocity;
+                SysQuat k1T = QuaternionUtils.QuaternionDerivative(numericsInitialOrientation, initialAngularVelocity);
                 
-                //compute slope for velocity and position at midpoint of the interval using k1
-                acceleration = CalculateTotalForces(initialVelocity + k1V / 2, initialAngularVelocity + k1W / 2, state) / ball.mass;
-                Vector3 k2V = deltaTime * acceleration;
-                Vector3 k2P = deltaTime * (initialVelocity + k1V/2);
                 
-                //compute slope for angular velocity and orientation at midpoint of the interval using k1
-                angularAcceleration = CalculateTotalTorque(initialVelocity + k1V/2, initialAngularVelocity + k1W/2, state) / ball.InertialMomentum;
-                Vector3 k2W = deltaTime * angularAcceleration;
-                Vector3 k2T = deltaTime * (initialAngularVelocity + k1W/2);
                 
-                //compute slope for velocity and position at midpoint of the interval using k2
-                acceleration = CalculateTotalForces(initialVelocity + k2V / 2, initialAngularVelocity + k2W / 2, state) / ball.mass;
-                Vector3 k3V = deltaTime * acceleration;
-                Vector3 k3P = deltaTime * (initialVelocity + k2V/2);
+                //K2
+                (Vector3 k2V, Vector3 k2W) = CalculateAccelerationAndAngularAcceleration(initialVelocity + deltaTime * k1V / 2, initialAngularVelocity + deltaTime * k1W / 2, state);
+                Vector3 k2P = initialVelocity + deltaTime * k1V/2;
+                SysQuat k2T = QuaternionUtils.QuaternionDerivative(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(k1T, deltaTime/2)), initialAngularVelocity + deltaTime * k1W / 2);
+
                 
-                //compute slope for angular velocity and orientation at midpoint of the interval using k2
-                angularAcceleration = CalculateTotalTorque(initialVelocity + k2V/2, initialAngularVelocity + k2W/2, state) / ball.InertialMomentum;
-                Vector3 k3W = deltaTime * angularAcceleration;
-                Vector3 k3T = deltaTime * (initialAngularVelocity + k2W/2);
                 
-                //compute slope for velocity and position at the end of the interval using k3
-                acceleration = CalculateTotalForces(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ball.mass;
-                Vector3 k4V = deltaTime * acceleration;
-                Vector3 k4P = deltaTime * (initialVelocity + k3V);
+                //K3
+                (Vector3 k3V, Vector3 k3W) = CalculateAccelerationAndAngularAcceleration(initialVelocity + deltaTime * k2V/2, initialAngularVelocity + deltaTime * k2W/2, state);
+                Vector3 k3P = initialVelocity + deltaTime * k2V/2;
+                SysQuat k3T = QuaternionUtils.QuaternionDerivative(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(k2T, deltaTime/2)), initialAngularVelocity + deltaTime * k2W / 2);
+
                 
-                //compute slope for angular velocity and orientation at the end of the interval using k3
-                angularAcceleration = CalculateTotalTorque(initialVelocity + k3V, initialAngularVelocity + k3W, state) / ball.InertialMomentum;
-                Vector3 k4W = deltaTime * angularAcceleration;
-                Vector3 k4T = deltaTime * (initialAngularVelocity + k3W);
+                
+                //K4
+                ( Vector3 k4V, Vector3 k4W) = CalculateAccelerationAndAngularAcceleration(initialVelocity + deltaTime * k3V, initialAngularVelocity + deltaTime * k3W, state);
+                Vector3 k4P = initialVelocity + deltaTime * k3V;
+                SysQuat k4T = QuaternionUtils.QuaternionDerivative(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(k3T, deltaTime)), initialAngularVelocity + deltaTime * k3W);
+
+                
+                
                 
                 //update velocity and position using the weighted average of k1, k2, k3 and k4
-                Vector3 newPosition = initialPosition + (k1P + 2*k2P + 2*k3P + k4P) / 6;
-                Vector3 newVelocity = initialVelocity + (k1V + 2*k2V + 2*k3V + k4V) / 6;
+                Vector3 newPosition = initialPosition + deltaTime * (k1P + 2*k2P + 2*k3P + k4P) / 6;
+                Vector3 newVelocity = initialVelocity + deltaTime * (k1V + 2*k2V + 2*k3V + k4V) / 6;
                 
                 //update angular velocity and orientation using the weighted average of k1, k2, k3 and k4
-                Vector3 newAngularVelocity = initialAngularVelocity + (k1W + 2*k2W + 2*k3W + k4W) / 6;
-                Quaternion newOrientation = Quaternion.Euler(Mathf.Rad2Deg * (k1T + 2*k2T + 2*k3T + k4T) / 6) * initialOrientation;
-                
-                //set vertical position component equal to the radius to fix numerical problem and avoid ball penetrating the ground if the ball is sliding or rolling
-                if (state != BallState.Bouncing && state != BallState.Stopped)
-                {
-                    newPosition.y = ball.radius;
+                Vector3 newAngularVelocity = initialAngularVelocity + deltaTime * (k1W + 2*k2W + 2*k3W + k4W) / 6;
 
-                    //if ball is rolling, constrain angular velocity to match pure rolling condition
-                    if (state == BallState.Rolling)
-                    {
-                        float y = newAngularVelocity.y;
-                        newAngularVelocity = -Vector3.Cross(newVelocity, Vector3.up) / ball.radius;
-                        newAngularVelocity.y = y;
-                        newOrientation = Quaternion.Euler(Mathf.Rad2Deg * deltaTime * newAngularVelocity) * initialOrientation;
-                    }
-                }
+                SysQuat kSum = k1T;
+                kSum = SysQuat.Add(kSum, SysQuat.Multiply(k2T, 2));
+                kSum = SysQuat.Add(kSum, SysQuat.Multiply(k3T, 2));
+                kSum = SysQuat.Add(kSum, k4T);
+                Quaternion newOrientation = QuaternionUtils.ToUnity(SysQuat.Add(numericsInitialOrientation, SysQuat.Multiply(kSum, deltaTime/6)));
                 
                 return (newPosition, newOrientation, newVelocity, newAngularVelocity);
             }
             
             private enum IntegrationMethod
             {
-                VelocityVerlet,
                 ExplicitEuler,
+                SemiImplicitEuler,
+                VelocityVerlet,
                 Rk2,
                 Rk4
             }
@@ -351,7 +316,7 @@ public class BallPhysics : MonoBehaviour
             private (Vector3, Quaternion, Vector3, Vector3, BallState) HandleGroundCollisionAndBounce(float deltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
                 //finds moment of collision
-                float collisionDeltaTime = BinarySearchCollisionDetection(deltaTime / 2, deltaTime / 2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                float collisionDeltaTime = RecursiveCollisionDetection(deltaTime / 2, deltaTime / 2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
                 
                 //updates position, orientation, velocity and angular velocity after the collision
                 (Vector3 positionAfterCollision, Quaternion orientationAfterCollision, Vector3 velocityAfterCollision, Vector3 angularVelocityAfterCollision) = ComputePostCollisionVelocities(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
@@ -368,7 +333,7 @@ public class BallPhysics : MonoBehaviour
             }
             
             //this method is called recursively to binary search the moment of collision with the ground
-            private float BinarySearchCollisionDetection(float deltaTime, float step, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
+            private float RecursiveCollisionDetection(float deltaTime, float step, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
                 //integrate the motion with the current iteration delta time
                 (Vector3 integratedPosition, _, _, _) = IntegrateMotion(deltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
@@ -378,11 +343,11 @@ public class BallPhysics : MonoBehaviour
                 float newDeltaTime = integratedPosition.y - ball.radius < 0f ? deltaTime - step / 2 : deltaTime + step / 2;
                 
                 //if the current delta time step is small enough it means a good guess of the exact moment of collision was obtained
-                if (step < BinarySearchThreshold)
+                if (step < CollisionThreshold)
                     return newDeltaTime;
                 
                 //otherwise a recursive call with the new guess of the delta time and the halved step is made
-                return BinarySearchCollisionDetection(newDeltaTime, step/2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                return RecursiveCollisionDetection(newDeltaTime, step/2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
             }
             private (Vector3, Quaternion, Vector3, Vector3) ComputePostCollisionVelocities(float collisionDeltaTime, Vector3 initialPosition, Quaternion initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
@@ -438,13 +403,13 @@ public class BallPhysics : MonoBehaviour
             }
             
             
-            private Vector3 ComputeMagnusForce(Vector3 velocity, Vector3 angularVelocity)
+            private Vector3 ComputeMagnusForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                if(velocity.magnitude < 1e-4)
-                    return Vector3.zero;
                 
                 //direction cross product
                 Vector3 direction = Vector3.Cross(angularVelocity.normalized, velocity.normalized);
+
+                Vector3 magnusForce;
                 
                 if(!ball.useConstantCoefficients)
                 {
@@ -456,53 +421,63 @@ public class BallPhysics : MonoBehaviour
 
                     ball.liftCoefficient = 1.15f * Mathf.Pow(s, 0.83f) * (cdRe0 -  ball.dragCoefficient) / (cdRe0 - cdReRef);
 
-                    return 0.5f * airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
+
+                    magnusForce = 0.5f * airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
+
+                    if (state != BallState.Bouncing)
+                        magnusForce.y = 0f;
+
+                    return magnusForce;
                 }
                 
                 //otherwise use constant linear drag coefficient
-                return 0.5f * airDensity * ball.constantLiftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
+                magnusForce =  0.5f * airDensity * ball.constantLiftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
+                
+                if (state != BallState.Bouncing)
+                    magnusForce.y = 0f;
+
+                return magnusForce;
             }
             
             //this method computes this friction force with the ground, given the velocity, the angular velocity and the current state of the ball
             private Vector3 CalculateFrictionForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
                 if(state == BallState.Bouncing)
-                    return Vector3.zero; 
+                    return Vector3.zero;
                 
-                Vector3 frictionForce;
+                Vector3 frictionForce = Vector3.zero;
+                
+                float normalForce = (- _gravitationalForce - _buoyantForce).magnitude;
                 
                 //if the ball is sliding, use the sliding friction formula
                 if(state == BallState.Sliding)
                 {
                     //inclination in of the ball axis against the up-axis in radians
-                    float theta = Vector3.Angle(angularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+                    float theta = (90f - Vector3.Angle(angularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
                     
                     //compute direction of the velocity of the contact point
-                    Vector3 frictionDirection = (velocity - Vector3.Cross(angularVelocity, ball.radius * Mathf.Sin(theta) * Vector3.up)).normalized;
+                    Vector3 frictionDirection = (velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity)).normalized;
                     
-                    frictionForce = -ball.mass * Gravity * ball.coefficientOfSlidingFriction * frictionDirection;
-                }
-                //otherwise, rolling friction formula
-                else
-                {
-                    frictionForce = -ball.coefficientOfRollingFriction * ball.mass * Gravity * velocity.normalized;
+                    frictionForce += -ball.coefficientOfSlidingFriction * normalForce * frictionDirection;
+                    return frictionForce;
                 }
                 
-                frictionForce.y = 0;
+                //otherwise, rolling friction formula
+                frictionForce += -ball.coefficientOfRollingFriction * normalForce * velocity.normalized;
                 return frictionForce;
+                
             }
             
             //this method computes the result of the sum of all forces acting on the ball
             private Vector3 CalculateTotalForces(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                Vector3 gravitationalForce = state == BallState.Bouncing ? Gravity * ball.mass * Vector3.down : Vector3.zero;
-                Vector3 buoyantForce = state == BallState.Bouncing ? 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up : Vector3.zero;
                 Vector3 dragForce = ComputeAirResistanceForce(velocity, angularVelocity);
-                Vector3 magnusForce = ComputeMagnusForce(velocity, angularVelocity);
+                Vector3 magnusForce = ComputeMagnusForce(velocity, angularVelocity, state);
+                Vector3 normalForce = state != BallState.Bouncing ? - _gravitationalForce - _buoyantForce : Vector3.zero;
                 Vector3 frictionForce = CalculateFrictionForce(velocity, angularVelocity, state);
                 
                 //sum all forces
-                Vector3 totalForces = gravitationalForce + buoyantForce + dragForce + magnusForce + frictionForce;
+                Vector3 totalForces = _gravitationalForce + _buoyantForce + dragForce + magnusForce + normalForce + frictionForce;
 
                 return totalForces;
             }
@@ -513,38 +488,29 @@ public class BallPhysics : MonoBehaviour
                 if(state == BallState.Bouncing)
                     return Vector3.zero;
                 
-                //component of the friction around y-axis to simulate the reduction of rotation around the vertical axis
-                Vector3 frictionTorque = new Vector3(0, - ball.mass * Gravity * ball.coefficientOfVerticalAxisSpinningFriction * angularVelocity.y, 0) * ball.InertialMomentum;
+                float normalForce = (- _gravitationalForce - _buoyantForce).magnitude;
+                
+                Vector3 frictionTorque = Vector3.zero;
+                
+                frictionTorque = new Vector3(0, - ball.coefficientOfVerticalAxisSpinningFriction * angularVelocity.y, 0);
                 
                 //if the ball is rolling, the contact point is not moving with respect to the ground, therefore the is no other friction component acting on the ball
                 if (state == BallState.Rolling)
                     return frictionTorque;
                 
                 //inclination in of the ball axis against the up-axis in radians
-                float theta = Vector3.Angle(angularVelocity.normalized, Vector3.up) * Mathf.Deg2Rad;
+                float theta = (90f - Vector3.Angle(angularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
                     
                 //compute direction of the velocity of the contact point
-                Vector3 frictionDirection = velocity - Vector3.Cross(angularVelocity, ball.radius * Mathf.Sin(theta) * Vector3.up);
+                Vector3 frictionDirection = velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity).normalized;
                 Vector3 direction = Vector3.Cross(Vector3.up, frictionDirection).normalized;
                 
-                Vector3 angularAcceleration =  ball.mass * ball.coefficientOfSlidingFriction * Gravity * ball.radius / ball.InertialMomentum * direction;
+                Vector3 angularAcceleration = ball.coefficientOfSlidingFriction * normalForce * ball.radius * direction / ball.InertialMomentum;
 
                 frictionTorque += angularAcceleration * ball.InertialMomentum;
                 
                 return frictionTorque;
             }
-            
-            //this method computes the torque acting on the ball created by the friction with the air that cause spin decay during the flight, given velocity, angular velocity and the state of the ball
-            /*private Vector3 CalculateDragTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
-            { 
-                if(state != BallState.Bouncing)
-                    return Vector3.zero;
-                
-                Vector3 spinDecayTorque = - ball.spinDecayCoefficient * velocity.magnitude * ball.InertialMomentum * angularVelocity;
-                
-                return spinDecayTorque;
-            }*/
-            
             
             private Vector3 CalculateDragTorque(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
@@ -578,6 +544,16 @@ public class BallPhysics : MonoBehaviour
                 
                 return totalTorque;
             }
+
+            private (Vector3, Vector3) CalculateAccelerationAndAngularAcceleration(Vector3 velocity, Vector3 angularVelocity, BallState state)
+            {
+                Vector3 acceleration = CalculateTotalForces(velocity, angularVelocity, state) / ball.mass;
+                Vector3 angularAcceleration = CalculateTotalTorque(velocity, angularVelocity, state) / ball.InertialMomentum;
+                
+                angularAcceleration = state == BallState.Rolling ? Vector3.Cross(acceleration / ball.radius, Vector3.down) + Vector3.up * angularAcceleration.y : angularAcceleration;
+                
+                return (acceleration, angularAcceleration);
+            }
             
         #endregion
     
@@ -591,7 +567,7 @@ public class BallPhysics : MonoBehaviour
         //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
         private (Vector3, Vector3) FindOptimalVelocityForTargetHitGivenInitialSpeedAndSpin(float deltaTime, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
         { 
-            float startTime = Time.realtimeSinceStartup;
+            Stopwatch stopwatch = Stopwatch.StartNew();
             float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
             
             //initial velocity direction guess is toward the target and angle over horizontal plane is the average between minVerticalAngle and maxVerticalAngle
@@ -684,12 +660,12 @@ public class BallPhysics : MonoBehaviour
                 }
             }
             
-            float endTime = Time.realtimeSinceStartup;
+            stopwatch.Stop();
             
             if(!constraintShot)
             {
                 //debugging results
-                float computationTimeInMilliseconds = (endTime - startTime) * 1e3f;
+                double computationTimeInMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
                     
                 Debug.Log("Prediction duration: " + computationTimeInMilliseconds.ToString("F3") + " ms with " + iterationCounter + " iterations");
                 Debug.Log("Error: " + (error * 1e3).ToString("F3") + " mm");
@@ -715,7 +691,8 @@ public class BallPhysics : MonoBehaviour
         //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
         private (Vector3, Vector3)  FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(float deltaTime, Vector3 targetPosition, Vector3 constraintPosition, Vector3 initialPosition, float speed, int maximumIterations, bool testing = false)
         { 
-            float startTime = Time.realtimeSinceStartup;
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            
             float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
             int iterationCounter = 0;
 
@@ -851,8 +828,8 @@ public class BallPhysics : MonoBehaviour
                 previousTargetError = targetError;
             }
             
-            float endTime = Time.realtimeSinceStartup;
-            float computationTimeInMilliseconds = (endTime - startTime)  * 1e3f;
+            stopwatch.Stop();
+            double computationTimeInMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
             
             //debugging predicted position
             _currentTrajectory = new List<Vector3>();
@@ -1184,7 +1161,7 @@ public class BallPhysics : MonoBehaviour
             if (distance1 < distance2) 
             {
                 //if the step size is smaller than the maximum allowed value, the best estimation is found
-                if (step < BinarySearchThreshold)
+                if (step < CollisionThreshold)
                 {
                     float correctDeltaTime = deltaTime - step;
                     (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
@@ -1196,7 +1173,7 @@ public class BallPhysics : MonoBehaviour
             else
             {
                 //if the step size is smaller than the maximum allowed value, the best estimation is found
-                if (step < BinarySearchThreshold)
+                if (step < CollisionThreshold)
                 {
                     float correctDeltaTime = deltaTime + step;
                     (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
@@ -1294,9 +1271,9 @@ public class BallPhysics : MonoBehaviour
         {
             if(useFrameByFrameMode)
             {
-                return ComputeMagnusForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity);
+                return ComputeMagnusForce(ball.Frames[FrameCount].Velocity, ball.Frames[FrameCount].AngularVelocity, ball.Frames[FrameCount].State);
             }
-            return ComputeMagnusForce(ball.velocity, ball.angularVelocity);
+            return ComputeMagnusForce(ball.velocity, ball.angularVelocity, ball.state);
         }
     
 
@@ -1336,7 +1313,7 @@ public class BallPhysics : MonoBehaviour
             return CalculateTotalTorque(ball.velocity, ball.angularVelocity, ball.state);
         }
 
-        public float TimeToCompute()
+        public double TimeToCompute()
         {
             if(useFrameByFrameMode)
             {
