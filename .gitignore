@@ -1,8 +1,8 @@
-[Ll]ibrary/
+Library/
+Logs/
 [Tt]emp/
-[Bb]uild/
-[Bb]uilds/
+Build/
+Builds/
 Assets/AS
 Assets/Tests
-Library
 
