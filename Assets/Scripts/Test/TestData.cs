@@ -11,6 +11,7 @@ public class TestData
     public List<int> iterations = new List<int>();
     public List<float> constraintErrors = new List<float>();
     public List<float> initialSpeeds = new List<float>();
+    public List<float> elevationAngle = new List<float>();
     public List<float> zSpin = new List<float>();
     public List<float> ySpin = new List<float>();
     public List<double> computationTime = new List<double>();

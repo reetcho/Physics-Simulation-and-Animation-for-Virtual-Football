@@ -1,9 +1,11 @@
-﻿using System;
+﻿#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
+using System;
 using System.Collections.Generic;
 using System.IO;
-using UnityEditor;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 public class Test : MonoBehaviour
 {
@@ -13,6 +15,8 @@ public class Test : MonoBehaviour
     [SerializeField] private String description;
     [SerializeField] private String fileName;
     [SerializeField] private int numberOfSteps;
+
+    public bool randomPositions;
     
     [Header("Test parameters")]
     [SerializeField] private Vector2 startPosition;
@@ -24,10 +28,15 @@ public class Test : MonoBehaviour
     [SerializeField] private float minInitialSpeed;
     [SerializeField] private float maxInitialSpeed;
 
+    private void Start()
+    {
+        ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin, randomPositions);
+    }
+
     public void StartTest()
     {
         if(Application.isPlaying)
-            ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin);
+            ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin, randomPositions);
     }
     
     public void StartConstraintTest()
@@ -64,7 +73,12 @@ public class Test : MonoBehaviour
             
     }
 }
-
+public class FrameList
+{
+    public List<Vector3> positions = new List<Vector3>();
+    public List<double> computationTimes = new List<double>();
+}
+#if UNITY_EDITOR
 [CustomEditor(typeof(Test))]
 public class MyComponentEditor : Editor
 {
@@ -98,8 +112,6 @@ public class MyComponentEditor : Editor
     }
 }
 
-public class FrameList
-{
-    public List<Vector3> positions = new List<Vector3>();
-    public List<double> computationTimes = new List<double>();
-}
+
+
+#endif

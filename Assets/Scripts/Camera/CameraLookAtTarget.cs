@@ -19,7 +19,7 @@ public class CameraLookAtTarget : MonoBehaviour
         }
     }
 
-    void FixedUpdate()
+    void LateUpdate()
     {
         if (target == null || cam == null) return;
 

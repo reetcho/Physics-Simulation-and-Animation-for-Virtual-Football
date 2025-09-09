@@ -19,7 +19,7 @@ public class OrbitingCamera : MonoBehaviour
         transform.position = target.position + offset;
     }
 
-    void FixedUpdate()
+    void LateUpdate()
     {
         if (target == null)
         {

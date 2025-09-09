@@ -1,7 +1,7 @@
+
+#if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor;
-using System.Collections.Generic;
-using Unity.VisualScripting;
 
 [InitializeOnLoad]
 public class DisplayInfo
@@ -80,30 +80,5 @@ public class DisplayInfo
         Handles.EndGUI();
     }
 }
+#endif
 
-[InitializeOnLoad]
-public static class SphereProjectionEditor
-{
-    private static BallPhysics _ballPhysics; 
-    private static Transform groundTransform; 
-
-    static SphereProjectionEditor()
-    {
-        SceneView.duringSceneGui += OnSceneGUI;
-    }
-
-    private static void OnSceneGUI(SceneView sceneView)
-    {
-        if (_ballPhysics == null || groundTransform == null)
-        {
-            _ballPhysics = GameObject.Find("Ball").GetComponent<BallPhysics>(); 
-            GameObject ground = GameObject.Find("Ground"); 
-            if (ground) groundTransform = ground.transform;
-
-            if (_ballPhysics == null || groundTransform == null) return;
-        }
-        
-        Handles.color = Color.magenta;
-    }
-    
-}

@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using UnityEngine.Serialization;
 using Quaternion = UnityEngine.Quaternion;
 using Vector3 = UnityEngine.Vector3;
@@ -17,6 +18,8 @@ public class Ball : MonoBehaviour
         public float mass;
         public float inertialMomentumConstant = 2f/3f; //hollow sphere 
         public float InertialMomentum { get; private set; } //assumption of thin sphere -> 2/3 * mass * radius^2
+        
+        [Header("Restitution coefficients")]
         [Range(0, 1)] public float coefficientOfVerticalRestitution;
         [Range(-1, 1)] public float coefficientOfHorizontalRestitution;
         [Range(0, 1)] public float coefficientOfVerticalAxisSpinRestitution; //percentage of angular velocity around y-axis that is preserved after the ball bounces on the ground
@@ -24,9 +27,9 @@ public class Ball : MonoBehaviour
         [Header("Ground friction forces")]
         [Range(0, 1)] public float coefficientOfSlidingFriction;
         [Range(0, 1)] public float coefficientOfRollingFriction; 
-        [Range(0, 1)] public float coefficientOfVerticalAxisSpinningFriction; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
+        [FormerlySerializedAs("coefficientOfVerticalAxisSpinningFriction")] [Range(0, 1)] public float coefficientOfVerticalAxisSpinningDamping; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
         
-        [Header("Air friction forces")]
+        [Header("Aerodynamic forces")]
         public float dragCoefficient;
         public float liftCoefficient;
 
@@ -34,11 +37,11 @@ public class Ball : MonoBehaviour
         public float speedOfTransitionFromLaminarToTurbulentDrag = 12.19f;
         //drag transition sharpness speed
         public float dragTransitionSlope = 1.309f;
-        public float spinDecayCoefficient;
         
         public bool useConstantCoefficients;
         public float constantDragCoefficient;
         public float constantLiftCoefficient;
+        public float constantSpinDecayCoefficient;
         
         [Header("Other")]
         public Vector3 resetPosition;
@@ -62,12 +65,15 @@ public class Ball : MonoBehaviour
 
             Reset();
         }
-
-        private void FixedUpdate()
+        
+        private void LateUpdate()
         {
             transform.position = position;
             transform.rotation = orientation;
+        }
 
+        private void FixedUpdate()
+        {
             CheckIsMoving();
         }
         
@@ -111,7 +117,7 @@ public class Ball : MonoBehaviour
     #region Utils
         private void CheckIsMoving()
         {
-            if (CalculateTotalEnergy() < 1e-3 && CalculateRotationalEnergy() < 1e-5)
+            if (CalculateTotalEnergy() < 1e-4f)
             {
                 ResetValues();
             }
@@ -130,6 +136,14 @@ public class Ball : MonoBehaviour
         }
         private void ResetValues()
         {
+            //TODO remove this
+            /*
+            position = new Vector3(0, radius, 0);
+            velocity = new Vector3(20, 10, 0);
+            angularVelocity = new Vector3(0, 15, 10);
+            state = BallState.Bouncing;
+            */
+            
             velocity = Vector3.zero;
             angularVelocity = Vector3.zero;
             state = BallState.Stopped;
