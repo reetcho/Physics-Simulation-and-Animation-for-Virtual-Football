@@ -1,8 +1,11 @@
 Library/
 Logs/
-[Tt]emp/
+Temp/
 Build/
 Builds/
 Assets/AS
 Assets/Tests
+UserSettings/
+
+
 
