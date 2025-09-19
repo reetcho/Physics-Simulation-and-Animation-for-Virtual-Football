@@ -941,18 +941,18 @@ public class BallPhysics : MonoBehaviour
     #region Testing
         
         //if no other test is running, starts the coroutine to run a new test
-        public void StartTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin, bool randomPositions)
+        public void StartTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin)
         {
             if (_testRunning)
                 return;
 
             _testRunning = true;
 
-            StartCoroutine(RunCoroutineTestForTargetedKick(description, fileName, testSteps, testStartPosition, testEndPosition, speed, spin, target.transform.position, randomPositions));
+            StartCoroutine(RunCoroutineTestForTargetedKick(description, fileName, testSteps, testStartPosition, testEndPosition, speed, spin, target.transform.position));
         }
         
         //method called in the coroutines that runs the test
-        private IEnumerator RunCoroutineTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin, Vector3 targetPosition, bool randomPositions)
+        private IEnumerator RunCoroutineTestForTargetedKick(String description, String fileName, int testSteps, Vector3 testStartPosition, Vector3 testEndPosition, float speed, Vector3 spin, Vector3 targetPosition)
         {
             _testData = new TestData();
             int currentTestStep = 0;
@@ -965,14 +965,6 @@ public class BallPhysics : MonoBehaviour
                 
                 Vector3 stepDirection = (testEndPosition - testStartPosition) / testSteps;
                 Vector3 testCurrentPosition = testStartPosition + stepDirection * currentTestStep;
-
-                if (randomPositions)
-                {
-                    speed = UnityEngine.Random.Range(20f, 30f);
-                    testCurrentPosition = new Vector3(UnityEngine.Random.Range(-10f, 0), ball.radius, UnityEngine.Random.Range(-10, 10));
-                    targetPosition = new Vector3(9.65f, UnityEngine.Random.Range(0.25f, 2.25f), UnityEngine.Random.Range(-3.25f, 3.25f));
-                    spin = new Vector3(0, UnityEngine.Random.Range(-20, 20), UnityEngine.Random.Range(-20, 20));
-                }
                     
                 //TODO remove if and leave only the new method
                 if(newMethod)

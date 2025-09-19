@@ -16,8 +16,6 @@ public class Test : MonoBehaviour
     [SerializeField] private String fileName;
     [SerializeField] private int numberOfSteps;
 
-    public bool randomPositions;
-    
     [Header("Test parameters")]
     [SerializeField] private Vector2 startPosition;
     [SerializeField] private Vector2 endPosition;
@@ -28,15 +26,10 @@ public class Test : MonoBehaviour
     [SerializeField] private float minInitialSpeed;
     [SerializeField] private float maxInitialSpeed;
 
-    private void Start()
-    {
-        ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin, randomPositions);
-    }
-
     public void StartTest()
     {
         if(Application.isPlaying)
-            ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin, randomPositions);
+            ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin);
     }
     
     public void StartConstraintTest()
