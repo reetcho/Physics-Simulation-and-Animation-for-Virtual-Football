@@ -3,6 +3,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 public class InteractionController : MonoBehaviour, IDragHandler
@@ -13,7 +14,8 @@ public class InteractionController : MonoBehaviour, IDragHandler
     public LineRenderer directionLine;
     public BallPhysics ballPhysics;
     public Ball ball;
-    public TextMeshProUGUI UItext;
+    public TextMeshProUGUI UItextModeInfo;
+    public TextMeshProUGUI UItextShotInfo;
     public CameraSwitcher cameraSwitcher; 
     [SerializeField] private GameObject aimLine;
     [SerializeField] private GameObject spinSlider;
@@ -100,15 +102,15 @@ public class InteractionController : MonoBehaviour, IDragHandler
 
                 switch (mode)
                 {
-                    case 0: UItext.SetText("NORMAL KICK MODE");
+                    case 0: UItextModeInfo.SetText("NORMAL KICK MODE");
                         aimLine.SetActive(true);
                         spinSlider.SetActive(true);
                         break;
-                    case 1: UItext.SetText("TARGETED KICK MODE");
+                    case 1: UItextModeInfo.SetText("TARGETED KICK MODE");
                         aimLine.SetActive(false);
                         spinSlider.SetActive(true);
                         break;
-                    case 2: UItext.SetText("DOUBLE TARGETED KICK MODE");
+                    case 2: UItextModeInfo.SetText("TWO CONSTRAINTS KICK MODE");
                         aimLine.SetActive(false);
                         spinSlider.SetActive(false);
                         break;
@@ -140,6 +142,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
             AdjustDirection(90, 15);
             _trajectoryPreview = ComputeKickTrajectory(direction, 30, GetSpinValue());
             UpdateDirectionLine();
+            UItextShotInfo.SetText("");
         }
 
         if (Gamepad.current != null && Gamepad.current.selectButton.wasPressedThisFrame)
@@ -154,7 +157,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
                 if (ballPhysics.useFrameByFrameMode)
                 {
                     replay = true;
-                    UItext.SetText("REPLAY MODE");
+                    UItextModeInfo.SetText("REPLAY MODE");
                     savedPos = ball.position;
                     savedRot = ball.orientation;
                     kickUI.SetActive(false);
@@ -168,13 +171,13 @@ public class InteractionController : MonoBehaviour, IDragHandler
                     switch (mode)
                     {
                         case 0:
-                            UItext.SetText("NORMAL KICK MODE");
+                            UItextModeInfo.SetText("NORMAL KICK MODE");
                             break;
                         case 1:
-                            UItext.SetText("TARGETED KICK MODE");
+                            UItextModeInfo.SetText("TARGETED KICK MODE");
                             break;
                         case 2:
-                            UItext.SetText("DOUBLE TARGETED KICK MODE");
+                            UItextModeInfo.SetText("TWO CONSTRAINTS KICK MODE");
                             break;
                     }
 
@@ -406,8 +409,8 @@ public class InteractionController : MonoBehaviour, IDragHandler
         return kickTrajectory;
     }
 
-    public void ShowComputationTime(double computationTime)
+    public void ShowComputationTime(double computationTime, float error)
     {
-        UItext.SetText(computationTime.ToString("0.00"));
+        UItextShotInfo.SetText("TIME TO COMPUTE: " + computationTime.ToString("0.00") + " ms" + "\nERROR: " + error.ToString("0.00") + " cm");
     }
 }

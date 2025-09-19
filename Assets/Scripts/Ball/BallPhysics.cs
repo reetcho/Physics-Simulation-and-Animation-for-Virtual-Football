@@ -1156,7 +1156,7 @@ public class BallPhysics : MonoBehaviour
                           iterationCounter + " iterations");
                 Debug.Log("Error: " + error.ToString("F1") + " cm");
 
-                interactionController.ShowComputationTime(computationTimeInMilliseconds);
+                interactionController.ShowComputationTime(computationTimeInMilliseconds, error);
 
                 //saving the data for the test
                 if (testing && iterationCounter > 1)
