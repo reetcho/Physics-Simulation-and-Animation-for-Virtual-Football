@@ -40,7 +40,7 @@ public class BallPhysics : MonoBehaviour
         [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit = 0f;
         [SerializeField] private bool adjustSpeed;
         [SerializeField] private float maxSpeedIncrease = 1.5f;
-        [SerializeField] private float maxSpeedDecrease = 0.5f;
+        //[SerializeField] private float maxSpeedDecrease = 0.5f;
         [Range(1, 100)] [SerializeField] private int speedCorrectionSteps = 2;
     
         
