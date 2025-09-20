@@ -6,7 +6,7 @@ using UnityEditor;
 [InitializeOnLoad]
 public class DisplayInfo
 {
-    private static BallPhysics _ballPhysics;
+    private static Simulation _simulation;
 
     static DisplayInfo()
     {
@@ -18,10 +18,10 @@ public class DisplayInfo
         if(!Application.isPlaying)
             return;
         
-        if (_ballPhysics == null)
+        if (_simulation == null)
         {
-            _ballPhysics = Object.FindObjectOfType<BallPhysics>(); 
-            if (_ballPhysics == null) return;
+            _simulation = Object.FindObjectOfType<Simulation>(); 
+            if (_simulation == null) return;
         }
 
         Handles.BeginGUI();
@@ -52,30 +52,30 @@ public class DisplayInfo
         
         Rect timeToCompute = new Rect(10, 350, 200, 30);
 
-        GUI.Label(positionRect, "Position: " + _ballPhysics.Position() + " m", textStyle);
-        GUI.Label(velocityRect, "Velocity: " + _ballPhysics.Velocity() + " m/s", textStyle);
-        GUI.Label(angularVelocityRect, "Angular velocity: " + _ballPhysics.AngularVelocity() + " rad/s", textStyle);
-        GUI.Label(accelerationRect, "Acceleration: " + _ballPhysics.Acceleration() + " m/s^2", textStyle);
+        GUI.Label(positionRect, "Position: " + _simulation.Position() + " m", textStyle);
+        GUI.Label(velocityRect, "Velocity: " + _simulation.Velocity() + " m/s", textStyle);
+        GUI.Label(angularVelocityRect, "Angular velocity: " + _simulation.AngularVelocity() + " rad/s", textStyle);
+        GUI.Label(accelerationRect, "Acceleration: " + _simulation.Acceleration() + " m/s^2", textStyle);
         
         textStyle.normal.textColor = Color.magenta;
-        GUI.Label(potentialRect, "Potential energy: " + _ballPhysics.PotentialEnergy() + " J", textStyle);
-        GUI.Label(kineticRect, "Kinetic energy: " + _ballPhysics.KineticEnergy() + " J", textStyle);
-        GUI.Label(rotationRect, "Rotational energy: " + _ballPhysics.RotationalEnergy() + " J", textStyle);
-        GUI.Label(totalEnergyRect, "Total energy: " + _ballPhysics.TotalEnergy() + " J", textStyle);
+        GUI.Label(potentialRect, "Potential energy: " + _simulation.PotentialEnergy() + " J", textStyle);
+        GUI.Label(kineticRect, "Kinetic energy: " + _simulation.KineticEnergy() + " J", textStyle);
+        GUI.Label(rotationRect, "Rotational energy: " + _simulation.RotationalEnergy() + " J", textStyle);
+        GUI.Label(totalEnergyRect, "Total energy: " + _simulation.TotalEnergy() + " J", textStyle);
         
         textStyle.normal.textColor = Color.green;
-        GUI.Label(dragForceRect, "Drag force: " + _ballPhysics.DragForce() + " N", textStyle);
-        GUI.Label(magnusForceRect, "Magnus force: " + _ballPhysics.MagnusForce() + " N", textStyle);
-        GUI.Label(frictionForceRect, "Friction force: " + _ballPhysics.FrictionForce() + " N", textStyle);
-        GUI.Label(totalForceRect, "Total forces: " + _ballPhysics.TotalForces() + " N", textStyle);
+        GUI.Label(dragForceRect, "Drag force: " + _simulation.DragForce() + " N", textStyle);
+        GUI.Label(magnusForceRect, "Magnus force: " + _simulation.MagnusForce() + " N", textStyle);
+        GUI.Label(frictionForceRect, "Friction force: " + _simulation.FrictionForce() + " N", textStyle);
+        GUI.Label(totalForceRect, "Total forces: " + _simulation.TotalForces() + " N", textStyle);
         
         textStyle.normal.textColor = Color.blue;
-        GUI.Label(frictionTorque, "Friction torque: " + _ballPhysics.FrictionTorque() + " mN * m", textStyle);
-        GUI.Label(dragTorque, "Drag torque: " + _ballPhysics.DragTorque()*1e3f + " mN * m", textStyle);
-        GUI.Label(totalTorques, "Total torques: " + _ballPhysics.TotalTorque() + " mN * m", textStyle);
+        GUI.Label(frictionTorque, "Friction torque: " + _simulation.FrictionTorque() + " mN * m", textStyle);
+        GUI.Label(dragTorque, "Drag torque: " + _simulation.DragTorque()*1e3f + " mN * m", textStyle);
+        GUI.Label(totalTorques, "Total torques: " + _simulation.TotalTorque() + " mN * m", textStyle);
         
         textStyle.normal.textColor = Color.black;
-        GUI.Label(timeToCompute, "Time to compute: " +  _ballPhysics.TimeToCompute() * 1e3f + " μs", textStyle);
+        GUI.Label(timeToCompute, "Time to compute: " +  _simulation.TimeToCompute() * 1e3f + " μs", textStyle);
         
         Handles.EndGUI();
     }

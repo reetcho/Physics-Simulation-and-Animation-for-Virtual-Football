@@ -3,7 +3,7 @@ using UnityEngine;
 public class RotateBarrierTowardsBall : MonoBehaviour
 {
 
-    [SerializeField] private BallPhysics ballPhysics;
+    [SerializeField] private Simulation simulation;
     [SerializeField] private GameObject ball;
     [SerializeField] private GameObject target;
     [SerializeField] private GameObject goal;
@@ -11,7 +11,7 @@ public class RotateBarrierTowardsBall : MonoBehaviour
 
     void Update()
     {
-        if(ballPhysics.ball.state == BallState.Stopped && !ballPhysics.useFrameByFrameMode)
+        if(simulation.ball.state == BallState.Stopped && !simulation.useFrameByFrameMode)
         {
             Vector3 direction = ball.transform.position - transform.position;
             direction.y = 0;

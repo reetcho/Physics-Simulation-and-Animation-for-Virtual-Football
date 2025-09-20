@@ -1,5 +1,4 @@
-﻿using System;
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.Serialization;
 using Quaternion = UnityEngine.Quaternion;
 using Vector3 = UnityEngine.Vector3;
@@ -90,7 +89,7 @@ public class Ball : MonoBehaviour
             if(state != BallState.Bouncing)
                 return 0f;
             
-            return mass * BallPhysics.Gravity * (position.y - radius);
+            return mass * Simulation.Gravity * (position.y - radius);
         }
 
         public float CalculateKineticEnergy()

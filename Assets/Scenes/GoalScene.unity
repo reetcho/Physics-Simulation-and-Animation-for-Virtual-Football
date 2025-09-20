@@ -179,9 +179,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 'TO QUIT PRESS ESC
-
-'
+  m_text: PRESS ESC TO QUIT
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2100000, guid: e73a58f6e2794ae7b1b7e50b7fb811b0, type: 2}
@@ -335,11 +333,11 @@ Transform:
   m_GameObject: {fileID: 36080666}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -260.09088, y: -113.181816, z: 240.81818}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: -49.029995, y: -23.401, z: 52.98}
+  m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
   m_Children: []
-  m_Father: {fileID: 1273250298}
+  m_Father: {fileID: 1270151555}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &225478180
 PrefabInstance:
@@ -612,7 +610,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 366036849}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1ef2e2411a5b2fc45b017851064beb0d, type: 3}
+  m_Script: {fileID: 11500000, guid: fa5240b4cd8ce1941b04de1288b8a857, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   ball: {fileID: 1608827537}
@@ -628,9 +626,8 @@ MonoBehaviour:
   elevationAngleMinimumLimit: 0
   adjustSpeed: 0
   maxSpeedIncrease: 2
-  maxSpeedDecrease: 0.5
   speedCorrectionSteps: 3
-  newMethod: 0
+  useMethodB: 0
   useFrameByFrameMode: 0
   interpolateFrames: 1
   useAerodynamicForces: 1
@@ -651,7 +648,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b6aea9b471c84bd8945a8ac96e20af76, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ballPhysics: {fileID: 366036852}
+  simulation: {fileID: 366036852}
   ball: {fileID: 1608827537}
   description: 
   fileName: FINALTEST
@@ -840,7 +837,7 @@ MonoBehaviour:
   handle: {fileID: 1877481159}
   chargingSlider: {fileID: 1118726915}
   directionLine: {fileID: 1025973886}
-  ballPhysics: {fileID: 366036852}
+  simulation: {fileID: 366036852}
   ball: {fileID: 1608827537}
   UItextModeInfo: {fileID: 1882412394}
   UItextShotInfo: {fileID: 951865139}
@@ -1697,22 +1694,23 @@ MonoBehaviour:
 
     D-PAD: ADJUST KICK DIRECTION
 
-    SQUARE(HOLD AND
-    RELEASE): CHARGE STRENGTH
+    SQUARE / X(HOLD
+    AND RELEASE): CHARGE STRENGTH
 
-    TRIANGLE: SWITCH TO NORMAL / TARGETED KICK MODE
+    TRIANGLE / Y: SWITCH TO NORMAL / TARGETED
+    KICK MODE
 
-    L1/R1:
-    SWITCH CAMERAS
+    L1-R1 / LB-RB: SWITCH CAMERAS
 
-    OPTIONS: RESET
+    OPTIONS / MENU: RESET
 
-    SHARE: ENABLE / DISABLE REPLAY MODE
+    SHARE
+    / VIEW: ENABLE / DISABLE REPLAY MODE
 
-    L2/R2:
-    MOVE THROUGH REPLAY
+    L2-R2 / LT-RB: MOVE THROUGH REPLAY
 
-    CIRCLE(HOLD): MOVE BALL / FREE CAMERA POSITION
+    CIRCLE
+    / B(HOLD): MOVE BALL / FREE CAMERA POSITION
 
 '
   m_isRightToLeft: 0
@@ -2280,8 +2278,7 @@ Transform:
   m_LocalPosition: {x: 0, y: 1.25, z: 0}
   m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
-  m_Children:
-  - {fileID: 1689714971}
+  m_Children: []
   m_Father: {fileID: 1208620063}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1184562289
@@ -2362,6 +2359,7 @@ Transform:
   m_Children:
   - {fileID: 528549265}
   - {fileID: 356402610}
+  - {fileID: 1689714971}
   - {fileID: 1162758412}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -2377,7 +2375,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0b7d07bdb57c98b48aaae1744ca81fb7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  ballPhysics: {fileID: 366036852}
+  simulation: {fileID: 366036852}
   ball: {fileID: 1608827529}
   target: {fileID: 1273250294}
   goal: {fileID: 697999028}
@@ -2447,6 +2445,7 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 36080669}
   - {fileID: 697999029}
   - {fileID: 315118402}
   - {fileID: 1273250298}
@@ -2554,8 +2553,7 @@ Transform:
   m_LocalPosition: {x: 8.19, y: 1.499, z: 0}
   m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
-  m_Children:
-  - {fileID: 36080669}
+  m_Children: []
   m_Father: {fileID: 1270151555}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1364886959
@@ -2938,11 +2936,11 @@ Transform:
   m_GameObject: {fileID: 1689714968}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 4.863636, y: -73.40909, z: 61.818184}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: 1.0699999, y: -14.9, z: 13.6}
+  m_LocalScale: {x: 0.22, y: 0.22, z: 0.22}
   m_ConstrainProportionsScale: 1
   m_Children: []
-  m_Father: {fileID: 1162758412}
+  m_Father: {fileID: 1208620063}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1705050128
 GameObject:

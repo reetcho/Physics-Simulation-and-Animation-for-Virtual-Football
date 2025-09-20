@@ -6,10 +6,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 public class Test : MonoBehaviour
 {
-    [SerializeField] private BallPhysics ballPhysics;
+    [FormerlySerializedAs("ballPhysics")] [SerializeField] private Simulation simulation;
     [SerializeField] private Ball ball;
     
     [SerializeField] private String description;
@@ -29,19 +30,19 @@ public class Test : MonoBehaviour
     public void StartTest()
     {
         if(Application.isPlaying)
-            ballPhysics.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, ballPhysics.ball.radius, startPosition.y), new Vector3(endPosition.x, ballPhysics.ball.radius, endPosition.y), speed, spin);
+            simulation.StartTestForTargetedKick(description, fileName, numberOfSteps, new Vector3(startPosition.x, simulation.ball.radius, startPosition.y), new Vector3(endPosition.x, simulation.ball.radius, endPosition.y), speed, spin);
     }
     
     public void StartConstraintTest()
     {
         if(Application.isPlaying)
-            ballPhysics.StartTestForTargetedKickWithConstraint(description, fileName, numberOfSteps, minInitialSpeed, maxInitialSpeed);
+            simulation.StartTestForTargetedKickWithConstraint(description, fileName, numberOfSteps, minInitialSpeed, maxInitialSpeed);
     }
     
     public void StopTest()
     {
         if(Application.isPlaying)
-            ballPhysics.StopTest();
+            simulation.StopTest();
     }
     
     public void SaveTrajectoryPoints()

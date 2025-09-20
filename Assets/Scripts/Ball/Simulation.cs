@@ -7,13 +7,14 @@ using UnityEditor;
 #endif
 using UnityEngine;
 using UnityEngine.Profiling;
+using UnityEngine.Serialization;
 using Debug = UnityEngine.Debug;
 using Quaternion = UnityEngine.Quaternion;
 using SysQuat = System.Numerics.Quaternion;
 using Vector2 = UnityEngine.Vector2;
 using Vector3 = UnityEngine.Vector3;
 
-public class BallPhysics : MonoBehaviour
+public class Simulation : MonoBehaviour
 {
     #region Variables
         public Ball ball;
@@ -36,17 +37,13 @@ public class BallPhysics : MonoBehaviour
         [SerializeField] private float constraintMaximumError;
         [SerializeField] private int maxIterations;
         [Range(0, 10)][SerializeField] private float maxErrorInCentimeters;
-        [Range(0, 90)] [SerializeField] private float elevationAngleMaximumLimit = 20f;
-        [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit = 0f;
+        [Range(0, 90)] [SerializeField] private float elevationAngleMaximumLimit;
+        [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit;
         [SerializeField] private bool adjustSpeed;
         [SerializeField] private float maxSpeedIncrease = 1.5f;
         //[SerializeField] private float maxSpeedDecrease = 0.5f;
         [Range(1, 100)] [SerializeField] private int speedCorrectionSteps = 2;
-    
-        
-        //TODO remove variable
-        [SerializeField] private bool newMethod;
-
+        [FormerlySerializedAs("useMethdoB")] [SerializeField] private bool useMethodB;
 
         [Header("Frame History")] 
         public bool useFrameByFrameMode;
@@ -60,6 +57,7 @@ public class BallPhysics : MonoBehaviour
         [SerializeField] private GameObject closestPointToTargetPlaceholder;
         [SerializeField] private GameObject constraint;
         [SerializeField] private GameObject closestPointToConstraintPlaceholder;
+        public InteractionController interactionController;
         private readonly List<List<Vector3>> _precalculationTrajectories = new List<List<Vector3>>();
         private List<Vector3> _currentTrajectory;
         private double _timeToComputeFrame;
@@ -235,45 +233,6 @@ public class BallPhysics : MonoBehaviour
 
                 return (pNext, qNext, vNext, wNext);
             }
-            
-            private (Vector3, SysQuat, Vector3, Vector3) VelocityVerlet(float deltaTime, Vector3 pCurrent, SysQuat qCurrent, Vector3 vCurrent, Vector3 wCurrent, BallState state)
-            {
-                //acceleration and angular acceleration at current state
-                (Vector3 aCurrent, Vector3 alphaCurrent) = CalculateAccelerationAndAngularAcceleration(vCurrent, wCurrent, state);
-
-                //first half-step velocity update
-                Vector3 vHalfStep = vCurrent + deltaTime / 2f * aCurrent;
-
-                //first half-step angular velocity update
-                Vector3 wHalfStep = wCurrent + deltaTime / 2f * alphaCurrent;
-                
-                //first half-step orientation update
-                SysQuat qDerivativeHalf = QuaternionUtils.QuaternionDerivative(qCurrent, wCurrent);
-                SysQuat qDeltaHalf = SysQuat.Multiply(qDerivativeHalf, deltaTime * 0.5f);
-                SysQuat qHalf = SysQuat.Add(qCurrent, qDeltaHalf);
-                qHalf = SysQuat.Normalize(qHalf);
-
-                //full-step position update
-                Vector3 pNext = pCurrent + deltaTime * vHalfStep;
-
-                //full-step orientation update
-                SysQuat qDerivative = QuaternionUtils.QuaternionDerivative(qHalf, wHalfStep);
-                SysQuat qDelta = SysQuat.Multiply(qDerivative, deltaTime);
-                SysQuat qNext = SysQuat.Add(qHalf, qDelta);
-                qNext = SysQuat.Normalize(qNext);
-
-                //acceleration and angular acceleration at half-step
-                (Vector3 aHalfStep, Vector3 alphaHalfStep) = CalculateAccelerationAndAngularAcceleration(vHalfStep, wHalfStep, state);
-
-                //second half-step velocity update
-                Vector3 vNext = vHalfStep + deltaTime / 2f * aHalfStep;
-
-                //second half-step angular velocity update
-                Vector3 wNext = wHalfStep + deltaTime / 2f * alphaHalfStep;
-
-                return (pNext, qNext, vNext, wNext);
-            }
-
             
             private (Vector3, SysQuat, Vector3, Vector3) Runge_Kutta_2(float deltaTime, Vector3 pCurrent, SysQuat qCurrent, Vector3 vCurrent, Vector3 wCurrent, BallState state)
             {
@@ -489,10 +448,6 @@ public class BallPhysics : MonoBehaviour
                     magnusForce = 0.5f * airDensity * ball.liftCoefficient * Mathf.PI * Mathf.Pow(ball.radius, 2) * Mathf.Pow(velocity.magnitude, 2) * direction;
                 }
                 
-                //magnus force vertical component is considered negligible when the ball is on the ground
-                if (state != BallState.Bouncing)
-                    magnusForce.y = 0f;
-
                 return magnusForce;
             }
             
@@ -519,14 +474,10 @@ public class BallPhysics : MonoBehaviour
                 }
                 else
                 {
-                    /*
-                    //otherwise, rolling friction formula
-                    if (velocity.magnitude < 1e-2)
-                        frictionForce = -ball.coefficientOfRollingFriction * normalForce * velocity;
-                    else
-                    */
-                        frictionForce = -ball.coefficientOfRollingFriction * normalForce * velocity.normalized;
+                    //otherwise rolling friction formula
+                    frictionForce = -ball.coefficientOfRollingFriction * normalForce * velocity.normalized;
                 }
+                
 
                 if (velocity.magnitude < 1e-3)
                 {
@@ -647,16 +598,8 @@ public class BallPhysics : MonoBehaviour
         #endregion
     
     #endregion
-
     
     #region Trajectory Prediction
-    
-        //This method computes the optimal velocity for the ball to reach a target, given the initial ball position, initial speed(velocity magnitude) and initial spin.
-        //Moreover, minVerticalAngle and maxVerticalAngle are used if we want the angle of the velocity over horizontal plane to be clamped between the two values. 
-        //constraintShot is only set true when the function is being called in the constraint shot function. This prevents the Debug.Logs to be printed.
-        //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
-
-        
        private (Vector3, Vector3) InitialVelocityGuess(Vector3 initialPosition, Vector3 targetPosition, float speed, float verticalAngle, Vector3 spin)
         {
             Vector3 direction = new Vector3(targetPosition.x - initialPosition.x, 0, targetPosition.z - initialPosition.z);
@@ -669,10 +612,193 @@ public class BallPhysics : MonoBehaviour
             return (bestVelocityEstimation, alignedSpin);
         }
        
-       
-        //This method computes the optimal velocity and spin for the ball to reach a target, passing through a given constraint(if possible) given the initial ball position and initial speed(velocity magnitude).
-        //testing is only set true when the function is being called during the tests. This allows to save the data of the test.
-        private (Vector3, Vector3)  FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(float deltaTime, Vector3 targetPosition, Vector3 constraintPosition, Vector3 initialPosition, float speed, int maximumIterations, bool testing = false)
+        private (Vector3, Vector3) PredictInitialValuesMethodA(float timeStep, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
+        { 
+            int iterationCounter = 1;
+            
+            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
+            
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            
+            (Vector3 bestVelocityEstimation, Vector3 alignedSpin) = InitialVelocityGuess(initialPosition, targetPosition, speed, maxVerticalAngle, spin);
+            (Vector3 predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
+            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
+            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            float errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+            
+            if (adjustSpeed && predictedPosition.y < targetPosition.y)
+            {                
+                int correctionCounter = 0;
+                while (correctionCounter < speedCorrectionSteps && predictedPosition.y < targetPosition.y)
+                {
+                    iterationCounter++;
+                    
+                    bestVelocityEstimation *= Mathf.Pow(maxSpeedIncrease, 1f/speedCorrectionSteps);
+                    bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+                    (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                    correctionCounter++;
+                }
+                
+                bestVelocityEstimation = bestVelocityEstimation.normalized * bestVelocityEstimation.magnitude;
+                (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+            }
+            
+            Vector3 minElevatedVelocity = ElevateVector(bestVelocityEstimation, minVerticalAngle);
+            (Vector3 minElevationImpactPoint,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, minElevatedVelocity, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            _precalculationTrajectories.RemoveAt(_precalculationTrajectories.Count-1);
+            
+            if(predictedPosition.y > targetPosition.y && minElevationImpactPoint.y < targetPosition.y)
+            {
+                float previousError = errorInCentimeters;
+                
+                //keeps iterating until either the error gets smaller than the maximum tolerated error or when the iteration counter reaches the maximum
+                while (errorInCentimeters > maxErrorInCentimeters && iterationCounter < maximumIterations)
+                {
+                    iterationCounter++;
+
+                    Vector3 currentVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+                    alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
+
+                    //compute the closest point to the target with current rotation
+                    (predictedPosition, _) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, currentVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+
+                    errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+                    
+                    bestVelocityEstimation = currentVelocityEstimation;
+                    
+                    if(Mathf.Abs(errorInCentimeters - previousError) < 1e-3f)
+                        break;
+
+                    previousError = errorInCentimeters;
+                }
+            }            
+            else
+            {
+                if (minElevationImpactPoint.y > targetPosition.y)
+                    bestVelocityEstimation = minElevatedVelocity;
+            }
+            
+            stopwatch.Stop();
+            
+            if(!constraintShot)
+            {
+                EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, false, constraintPosition);
+                _precalculationTrajectories.RemoveAt(_precalculationTrajectories.Count - 1);
+
+                (predictedPosition, _) = EstimateTrajectoryPathToTargetAccurate(1 / framePerSecond, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, false, constraintPosition);
+                closestPointToTargetPlaceholder.transform.position = predictedPosition;
+                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+
+                DebugAndTest(false, stopwatch, iterationCounter, errorInCentimeters, testing, distanceFromTarget, bestVelocityEstimation, alignedSpin);
+            }
+            
+            return (bestVelocityEstimation, alignedSpin);
+        }
+            
+        private (Vector3, Vector3) PredictInitialValuesMethodB(float timeStep, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
+        { 
+            int iterationCounter = 1;
+            
+            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
+            
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            
+            (Vector3 bestVelocityEstimation, Vector3 alignedSpin) = InitialVelocityGuess(initialPosition, targetPosition, speed, maxVerticalAngle, spin);
+            (Vector3 predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
+            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
+            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+
+            float errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+            
+            if (adjustSpeed && predictedPosition.y < targetPosition.y)
+            {                
+                int correctionCounter = 0;
+                while (correctionCounter < speedCorrectionSteps && predictedPosition.y < targetPosition.y)
+                {
+                    iterationCounter++;
+                    
+                    bestVelocityEstimation *= Mathf.Pow(maxSpeedIncrease, 1f/speedCorrectionSteps);
+                    bestVelocityEstimation = ElevateVector(bestVelocityEstimation, maxVerticalAngle);
+                    (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                    correctionCounter++;
+                }
+                
+                bestVelocityEstimation = bestVelocityEstimation.normalized * bestVelocityEstimation.magnitude;
+                (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+            }
+            
+            
+            Vector3 minElevatedVelocity = ElevateVector(bestVelocityEstimation, minVerticalAngle);
+            (Vector3 minElevationImpactPoint,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, minElevatedVelocity, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            if(predictedPosition.y > targetPosition.y && minElevationImpactPoint.y < targetPosition.y)
+            {
+                float elevationAngleLowLimit = minVerticalAngle;
+                float elevationAngleHighLimit = maxVerticalAngle;
+                
+                //keeps iterating until either the error gets smaller than the maximum tolerated error or when the iteration counter reaches the maximum
+                while (errorInCentimeters > maxErrorInCentimeters && iterationCounter < maximumIterations)
+                {
+                    iterationCounter++;
+                    
+                    float elevationAngle = (elevationAngleLowLimit + elevationAngleHighLimit) / 2;
+
+                    Vector3 currentVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
+                    currentVelocityEstimation = ElevateVector(currentVelocityEstimation, elevationAngle);
+                    alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
+
+                    //compute the closest point to the target with current rotation
+                    (predictedPosition, _) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, currentVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+
+                    errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+                    
+                    if (predictedPosition.y < targetPosition.y)
+                        elevationAngleLowLimit = elevationAngle;
+                    else
+                        elevationAngleHighLimit = elevationAngle;
+                    
+                    bestVelocityEstimation = currentVelocityEstimation;
+                }
+            }            
+            else
+            {
+                if (minElevationImpactPoint.y > targetPosition.y)
+                    bestVelocityEstimation = minElevatedVelocity;
+            }
+            
+            stopwatch.Stop();
+            
+            EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            
+            (predictedPosition, _) = EstimateTrajectoryPathToTargetAccurate(1/framePerSecond, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
+            closestPointToTargetPlaceholder.transform.position = predictedPosition;
+            errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
+            
+            DebugAndTest(constraintShot, stopwatch, iterationCounter, errorInCentimeters, testing, distanceFromTarget, bestVelocityEstimation, alignedSpin);
+            
+            return (bestVelocityEstimation, alignedSpin);
+        }
+        
+        private (Vector3, Vector3)  PredictInitialValuesTwoConstraints(float deltaTime, Vector3 targetPosition, Vector3 constraintPosition, Vector3 initialPosition, float speed, int maximumIterations, bool testing = false)
         { 
             Stopwatch stopwatch = Stopwatch.StartNew();
             
@@ -777,7 +903,7 @@ public class BallPhysics : MonoBehaviour
                     iterationCounter++;
                         
                     //use the predictor with no constraint with the found spin to have the trajectory prioritizing the target but passing in the closest possible point to the constraint
-                    (newEstimatedVelocity, newEstimatedSpin) = PredictInitialValues(deltaTime, targetPosition, initialPosition, speed, spin, 0, 30, 10, true, bestEstimatedVelocity);
+                    (newEstimatedVelocity, newEstimatedSpin) = PredictInitialValuesMethodA(deltaTime, targetPosition, initialPosition, speed, spin, elevationAngleMinimumLimit, elevationAngleMaximumLimit, 10, true, bestEstimatedVelocity);
 
                     //update best velocity estimation and best spin estimation
                     bestEstimatedVelocity = newEstimatedVelocity;
@@ -816,7 +942,6 @@ public class BallPhysics : MonoBehaviour
         //the method returns the closest point of the trajectory to the target and the closest point to the constraint
         private (Vector3,Vector3) EstimateTrajectoryClosestPoint(float deltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity,  Vector3 initialAngularVelocity, Vector3 targetPosition, bool constraintShot, Vector3 constraintPosition = default)
         {
-            //TODO remove
             _currentTrajectory = new List<Vector3>();
             
             bool stopSimulation = false;
@@ -868,7 +993,7 @@ public class BallPhysics : MonoBehaviour
                     float dNew2 = Vector3.Dot(newPosition - constraintPosition, planeNormal2);
 
                     // Check if there's a sign change (crossed the plane)
-                    if (Mathf.Sign(dCurrent2) != Mathf.Sign(dNew2))
+                    if (dCurrent2 * dNew2 < 0)
                     {
                         constraintClosestPoint = GetSegmentPlaneIntersection(currentPosition, newPosition,constraintPosition, planeNormal2);
                         foundClosestConstraintPoint = true;
@@ -881,22 +1006,94 @@ public class BallPhysics : MonoBehaviour
                 currentAngularVelocity = newAngularVelocity;
             }
             
-            //TODO remove
             if (!constraintShot)
                 _precalculationTrajectories.Add(_currentTrajectory);
             
             return (targetClosestPoint, constraintClosestPoint);
         }
         
-        Vector3 GetSegmentPlaneIntersection(Vector3 p0, Vector3 p1, Vector3 planePoint, Vector3 planeNormal)
+        private (Vector3,Vector3) EstimateTrajectoryPathToTargetAccurate(float deltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity,  Vector3 initialAngularVelocity, Vector3 targetPosition, bool constraintShot, Vector3 constraintPosition = default)
         {
-            Vector3 segment = p1 - p0;
-            
-            float denominator = Vector3.Dot(planeNormal, segment);
+            bool stopSimulation = false;
+            bool foundClosestConstraintPoint = false;
 
-            float t = Vector3.Dot(planeNormal, planePoint - p0) / denominator;
+            //initialize useful state variables
+            //previous state variables are needed to go back in time when the ball passes to the closest point 
+            Vector3 currentPosition = initialPosition;
+            Vector3 previousPosition = initialPosition;
+            SysQuat currentOrientation = initialOrientation;
+            SysQuat previousOrientation = initialOrientation;
+            Vector3 currentVelocity = initialVelocity;
+            Vector3 previousVelocity = initialVelocity;
+            Vector3 currentAngularVelocity = initialAngularVelocity;
+            Vector3 previousAngularVelocity = initialAngularVelocity;
+
+            Vector3 targetClosestPoint = currentPosition;
+            Vector3 constraintClosestPoint = currentPosition;
             
-            return p0 + t * segment;
+            float previousTargetError = Vector3.Distance(currentPosition, targetPosition);
+            float previousConstraintError = Vector3.Distance(currentPosition, constraintPosition);
+            while(!stopSimulation)
+            {
+                //integrate the next step on the motion
+                (Vector3 newPosition, SysQuat newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, currentPosition,  currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing);
+                
+                //compute the new distance from the target
+                float targetError = Vector3.Distance(currentPosition, targetPosition);
+                float newTargetError = Vector3.Distance(newPosition, targetPosition);
+                
+                //if the error at frame n is < than the error at frame n-1 and < than the error at frame n+1, then the closest point is between n-1 and n+1
+                if (targetError <= previousTargetError && targetError <= newTargetError)
+                {
+                    stopSimulation = true;
+                    
+                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                    targetClosestPoint = previousTargetError <= newTargetError 
+                        ? RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 2, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, targetPosition, previousTargetError, targetError)
+                        : RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 2, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, targetPosition, targetError, newTargetError);
+                }
+
+                //update previous error
+                previousTargetError = targetError;
+
+                //in case of shot with constraint find the closest point of trajectory to the constraint
+                if(constraintShot && !foundClosestConstraintPoint)
+                {
+                    //compute the new distance from the target
+                    float constraintError = Vector3.Distance(currentPosition, constraintPosition);
+                    float newConstraintError = Vector3.Distance(newPosition, constraintPosition);
+
+
+                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                    if (constraintError <= previousConstraintError && constraintError <= newConstraintError)
+                    {
+                        
+                        //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
+                        constraintClosestPoint = previousConstraintError <= newConstraintError
+                            ? RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 4, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, constraintPosition, previousConstraintError, constraintError)
+                            : RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 4, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, constraintPosition, constraintError, newConstraintError);
+                        
+                        foundClosestConstraintPoint = true;
+                    }
+
+                    //update previous constraint error
+                    previousConstraintError = constraintError;
+                }
+                
+                //update previous state variables
+                previousPosition = currentPosition;
+                previousVelocity = currentVelocity;
+                previousAngularVelocity = currentAngularVelocity;
+                previousOrientation = currentOrientation;
+                
+                //update current state variables
+                currentVelocity = newVelocity;
+                currentPosition = newPosition;
+                currentAngularVelocity = newAngularVelocity;
+                currentOrientation = newOrientation;
+            }
+            
+            return (targetClosestPoint, constraintClosestPoint);
         }
         
     #endregion
@@ -918,8 +1115,12 @@ public class BallPhysics : MonoBehaviour
         public void TargetedKick(float speed, Vector3 spin)
         {
             _precalculationTrajectories.Clear();
+
+            if (useMethodB)
+                (ball.velocity, ball.angularVelocity) = PredictInitialValuesMethodB(1f/computationFrameRate, target.transform.position, ball.position, speed, spin, elevationAngleMinimumLimit, elevationAngleMaximumLimit, maxIterations);
+            else
+                (ball.velocity, ball.angularVelocity) = PredictInitialValuesMethodA(1f/computationFrameRate, target.transform.position, ball.position, speed, spin, elevationAngleMinimumLimit, elevationAngleMaximumLimit, maxIterations);
             
-            (ball.velocity, ball.angularVelocity) = PredictInitialValues(1f/computationFrameRate, target.transform.position, ball.position, speed, spin, 0, 45, maxIterations);
             ball.state = BallState.Bouncing;
                 
             ball.AddTrajectoryFrame();
@@ -930,7 +1131,7 @@ public class BallPhysics : MonoBehaviour
         {
             _precalculationTrajectories.Clear();
             
-            (ball.velocity, ball.angularVelocity) = FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1f/computationFrameRate, target.transform.position, constraint.transform.position, ball.position, speed, maxIterations);
+            (ball.velocity, ball.angularVelocity) = PredictInitialValuesTwoConstraints(1f/computationFrameRate, target.transform.position, constraint.transform.position, ball.position, speed, maxIterations);
             ball.state = BallState.Bouncing;
 
             ball.AddTrajectoryFrame();
@@ -965,17 +1166,16 @@ public class BallPhysics : MonoBehaviour
                 
                 Vector3 stepDirection = (testEndPosition - testStartPosition) / testSteps;
                 Vector3 testCurrentPosition = testStartPosition + stepDirection * currentTestStep;
-                    
-                //TODO remove if and leave only the new method
-                if(newMethod)
+                
+                if(useMethodB)
                 {
-                    PredictInitialValues2(1f / computationFrameRate, targetPosition,
-                        testCurrentPosition, speed, spin, 0, 45f, maxIterations, false, default, true);
+                    PredictInitialValuesMethodB(1f / computationFrameRate, targetPosition,
+                        testCurrentPosition, speed, spin, elevationAngleMinimumLimit, elevationAngleMaximumLimit, maxIterations, false, default, true);
                 }
                 else
                 {
-                    PredictInitialValues(1f / computationFrameRate, targetPosition,
-                        testCurrentPosition, speed, spin, 0, 45f, maxIterations, false, default, true);
+                    PredictInitialValuesMethodA(1f / computationFrameRate, targetPosition,
+                        testCurrentPosition, speed, spin, elevationAngleMinimumLimit, elevationAngleMaximumLimit, maxIterations, false, default, true);
                 }
 
                 currentTestStep++;
@@ -1017,7 +1217,7 @@ public class BallPhysics : MonoBehaviour
                 while(multiIterationCounter < 9)
                 {
                     _precalculationTrajectories.Clear();
-                    FindOptimalVelocityForTargetHitWithConstraintGivenInitialSpeed(1f / computationFrameRate, targetPosition, constraintPosition, initialPosition, testInitialSpeed, maxIterations, true);
+                    PredictInitialValuesTwoConstraints(1f / computationFrameRate, targetPosition, constraintPosition, initialPosition, testInitialSpeed, maxIterations, true);
                     multiIterationCounter++;
                 }
                 
@@ -1052,23 +1252,6 @@ public class BallPhysics : MonoBehaviour
             ball.Reset();
         }
         
-        //this method is used to find the rotation needed for the velocity to have the ball passing through the constraint
-        private Vector3 RotateVelocityTowardConstraint(Vector3 initialPosition, Vector3 predictedConstraintPosition, Vector3 vConstraint, Vector3 velocity)
-        {
-            //first it computes the vector pointing from the initial position of the ball in the kick to the predicted closest position to the target in the trajectory
-            Vector3 vPredictedConstraint = (predictedConstraintPosition - initialPosition).normalized;
-            
-            //then the rotation needed to transform the previously found vector into the vector vConstraint(which points from the initial position to the actual constraint position) is computed
-            Quaternion rotation = Quaternion.FromToRotation(vPredictedConstraint, vConstraint);
-            
-            //the rotation is applied to the velocity
-            Vector3 rotatedVelocity = rotation * velocity;
-           
-            return rotatedVelocity;
-        }
-        
-
-        
         private Vector3 AlignSpinWithVelocityDirection(Vector3 velocity, Vector3 spin)
         {
             //horizontal direction of velocity
@@ -1084,47 +1267,46 @@ public class BallPhysics : MonoBehaviour
             return alignedSpinDirection * horizontalSpinMagnitude + new Vector3(0f, spin.y, 0f);
         }
         
-        //this method calculates the closest position of a ball to a target position
-        //using a recursive binary search to find the time of closest approach
-        private Vector3 BinarySearchClosestPoint(float deltaTime, float step , Vector3 position, SysQuat orientation, Vector3 velocity, Vector3 angularVelocity, BallState state, Vector3 targetPosition)
+        Vector3 GetSegmentPlaneIntersection(Vector3 p0, Vector3 p1, Vector3 planePoint, Vector3 planeNormal)
         {
-            //calculate position at (deltaTime - step) and get its distance to target
-            (Vector3 pMinus, _, _, _) = IntegrateMotion(deltaTime - step, position, orientation, velocity, angularVelocity, state);
-            float distance1 = Vector3.Distance(pMinus, targetPosition);
+            Vector3 segment = p1 - p0;
             
-            //calculate position at (deltaTime + step) and get its distance to target
-            (Vector3 pPlus, _, _, _) = IntegrateMotion(deltaTime + step, position, orientation, velocity, angularVelocity, state);
-            float distance2 = Vector3.Distance(pPlus, targetPosition);
-            
-            Vector3 closestPoint;
-            
-            //compare which distance is closer to the target
-            if (distance1 < distance2) 
-            {
-                //if the step size is smaller than the maximum allowed value, the best estimation is found
-                if (step < TimeStepThreshold)
-                {
-                    float correctDeltaTime = deltaTime - step;
-                    (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
-                }
-                else
-                    //recursively search in the negative direction with half the step size
-                    closestPoint = BinarySearchClosestPoint(deltaTime - step, step/2, position, orientation, velocity, angularVelocity, state, targetPosition);
-            }
-            else
-            {
-                //if the step size is smaller than the maximum allowed value, the best estimation is found
-                if (step < TimeStepThreshold)
-                {
-                    float correctDeltaTime = deltaTime + step;
-                    (closestPoint, _, _, _) = IntegrateMotion(correctDeltaTime, position, orientation, velocity, angularVelocity, state);
-                }
-                else
-                    //recursively search in the negative direction with half the step size
-                    closestPoint = BinarySearchClosestPoint(deltaTime + step, step/2, position, orientation, velocity, angularVelocity, state, targetPosition);
-            }
+            float denominator = Vector3.Dot(planeNormal, segment);
 
-            return closestPoint;
+            float t = Vector3.Dot(planeNormal, planePoint - p0) / denominator;
+            
+            return p0 + t * segment;
+        }
+        
+        private Vector3 RotateVelocityTowardTarget(Vector3 initialPosition, Vector3 guessPosition, Vector3 targetPosition, Vector3 velocity)
+        {
+            Vector3 uGuess = guessPosition - initialPosition;
+            Vector3 uTarget = targetPosition - initialPosition;
+            
+            //compute rotation axis, perpendicular to the plane oh which uGuess and uTarget lie
+            Vector3 rotationAxis = Vector3.Cross(uGuess, uTarget).normalized;
+            
+            //compute angle between uGuess and uTarget
+            float theta = Vector3.SignedAngle(uGuess, uTarget, rotationAxis);
+            
+            //compute the rotation needed to align uGuess with uTarget
+            Quaternion rotation = Quaternion.AngleAxis(theta, rotationAxis);
+
+            //apply rotation to velocity
+            Vector3 rotatedVelocity = rotation * velocity;
+
+            return rotatedVelocity;
+        }
+
+        private Vector3 ElevateVector(Vector3 vector, float elevationAngle)
+        {
+            Vector3 dirHor = new Vector3(vector.x, 0f, vector.z).normalized;
+            Vector3 rotationAxis = Vector3.Cross(dirHor, Vector3.up);
+            Quaternion rotation = Quaternion.AngleAxis(elevationAngle, rotationAxis);
+            Vector3 rotatedVector = rotation * dirHor;
+            Vector3 rescaledVector = rotatedVector * vector.magnitude;
+            
+            return rescaledVector;
         }
         
         private Vector3 RecursiveClosestPointSearch(float deltaTime, float step, Vector3 position, SysQuat orientation, Vector3 velocity, Vector3 angularVelocity, BallState state, Vector3 targetPosition, float previousFrameDistance, float nextFrameDistance)
@@ -1144,7 +1326,6 @@ public class BallPhysics : MonoBehaviour
             return RecursiveClosestPointSearch(newDeltaTime, step / 2f, position, orientation, velocity, angularVelocity, state, targetPosition, goingBackward ? previousFrameDistance : newDistance, goingBackward ? newDistance : nextFrameDistance);
         }
 
-        public InteractionController interactionController;
         private void DebugAndTest(bool constraintShot, Stopwatch stopwatch, int iterationCounter, float error, bool testing, float distanceFromTarget = default, Vector3 velocity = default, Vector3 spin = default, float constraintError = default)
         {
             if (!constraintShot)
@@ -1457,324 +1638,6 @@ public class BallPhysics : MonoBehaviour
         }
     
     #endregion
-    
-    
-    
-    
-      
-            /// ////////////////////////////////////////////////////////////////// OLD METHOD!!!
-
-            
-        private (Vector3, Vector3) PredictInitialValues(float timeStep, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
-        { 
-            int iterationCounter = 1;
-            
-            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
-            
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            
-            (Vector3 bestVelocityEstimation, Vector3 alignedSpin) = InitialVelocityGuess(initialPosition, targetPosition, speed, elevationAngleMaximumLimit, spin);
-            (Vector3 predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
-            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
-            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            float errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-            
-            if (adjustSpeed && predictedPosition.y < targetPosition.y)
-            {                
-                int correctionCounter = 0;
-                while (correctionCounter < speedCorrectionSteps && predictedPosition.y < targetPosition.y)
-                {
-                    iterationCounter++;
-                    
-                    bestVelocityEstimation *= Mathf.Pow(maxSpeedIncrease, 1f/speedCorrectionSteps);
-                    bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-                    (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                    correctionCounter++;
-                }
-                
-                bestVelocityEstimation = bestVelocityEstimation.normalized * bestVelocityEstimation.magnitude;
-                (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-            }
-            
-            
-            Vector3 minElevatedVelocity = ElevateVector(bestVelocityEstimation, elevationAngleMinimumLimit);
-            (Vector3 minElevationImpactPoint,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, minElevatedVelocity, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            _precalculationTrajectories.RemoveAt(_precalculationTrajectories.Count-1);
-
-
-            
-            if(predictedPosition.y > targetPosition.y && minElevationImpactPoint.y < targetPosition.y)
-            {
-                float previousError = errorInCentimeters;
-                
-                //keeps iterating until either the error gets smaller than the maximum tolerated error or when the iteration counter reaches the maximum
-                while (errorInCentimeters > maxErrorInCentimeters && iterationCounter < maximumIterations)
-                {
-                    iterationCounter++;
-
-                    Vector3 currentVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-                    alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
-
-                    //compute the closest point to the target with current rotation
-                    (predictedPosition, _) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, currentVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-
-                    errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-                    
-                    bestVelocityEstimation = currentVelocityEstimation;
-                    
-                    if(Mathf.Abs(errorInCentimeters - previousError) < 1e-3f)
-                        break;
-
-                    previousError = errorInCentimeters;
-                }
-            }            
-            else
-            {
-                if (minElevationImpactPoint.y > targetPosition.y)
-                    bestVelocityEstimation = minElevatedVelocity;
-            }
-            
-            stopwatch.Stop();
-            
-            if(!constraintShot)
-            {
-                EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                _precalculationTrajectories.RemoveAt(_precalculationTrajectories.Count - 1);
-
-                (predictedPosition, _) = ComputeTrajectoryPathToTarget(1 / framePerSecond, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                closestPointToTargetPlaceholder.transform.position = predictedPosition;
-                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-
-                DebugAndTest(constraintShot, stopwatch, iterationCounter, errorInCentimeters, testing, distanceFromTarget, bestVelocityEstimation, alignedSpin);
-            }
-            
-            return (bestVelocityEstimation, alignedSpin);
-        }
-            
-            
-            
-        private (Vector3, Vector3) PredictInitialValues2(float timeStep, Vector3 targetPosition, Vector3 initialPosition, float speed, Vector3 spin, float minVerticalAngle, float maxVerticalAngle, int maximumIterations, bool constraintShot = false, Vector3 constraintPosition = default, bool testing = false)
-        { 
-            int iterationCounter = 1;
-            
-            float distanceFromTarget = Vector3.Distance(initialPosition, targetPosition);
-            
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            
-            (Vector3 bestVelocityEstimation, Vector3 alignedSpin) = InitialVelocityGuess(initialPosition, targetPosition, speed, elevationAngleMaximumLimit, spin);
-            (Vector3 predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
-            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            bestVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-            bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-            alignedSpin = AlignSpinWithVelocityDirection(bestVelocityEstimation, spin);
-            (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-
-            float errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-            
-            if (adjustSpeed && predictedPosition.y < targetPosition.y)
-            {                
-                int correctionCounter = 0;
-                while (correctionCounter < speedCorrectionSteps && predictedPosition.y < targetPosition.y)
-                {
-                    iterationCounter++;
-                    
-                    bestVelocityEstimation *= Mathf.Pow(maxSpeedIncrease, 1f/speedCorrectionSteps);
-                    bestVelocityEstimation = ElevateVector(bestVelocityEstimation, elevationAngleMaximumLimit);
-                    (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                    correctionCounter++;
-                }
-                
-                bestVelocityEstimation = bestVelocityEstimation.normalized * bestVelocityEstimation.magnitude;
-                (predictedPosition,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-                errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-            }
-            
-            
-            Vector3 minElevatedVelocity = ElevateVector(bestVelocityEstimation, elevationAngleMinimumLimit);
-            (Vector3 minElevationImpactPoint,_) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, minElevatedVelocity, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            if(predictedPosition.y > targetPosition.y && minElevationImpactPoint.y < targetPosition.y)
-            {
-                float elevationAngleLowLimit = elevationAngleMinimumLimit;
-                float elevationAngleHighLimit = elevationAngleMaximumLimit;
-                
-                //keeps iterating until either the error gets smaller than the maximum tolerated error or when the iteration counter reaches the maximum
-                while (errorInCentimeters > maxErrorInCentimeters && iterationCounter < maximumIterations)
-                {
-                    iterationCounter++;
-                    
-                    float elevationAngle = (elevationAngleLowLimit + elevationAngleHighLimit) / 2;
-
-                    Vector3 currentVelocityEstimation = RotateVelocityTowardTarget(initialPosition, predictedPosition, targetPosition, bestVelocityEstimation);
-                    currentVelocityEstimation = ElevateVector(currentVelocityEstimation, elevationAngle);
-                    alignedSpin = AlignSpinWithVelocityDirection(currentVelocityEstimation, spin);
-
-                    //compute the closest point to the target with current rotation
-                    (predictedPosition, _) = EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, currentVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-
-                    errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-                    
-                    if (predictedPosition.y < targetPosition.y)
-                        elevationAngleLowLimit = elevationAngle;
-                    else
-                        elevationAngleHighLimit = elevationAngle;
-                    
-                    bestVelocityEstimation = currentVelocityEstimation;
-                }
-            }            
-            else
-            {
-                if (minElevationImpactPoint.y > targetPosition.y)
-                    bestVelocityEstimation = minElevatedVelocity;
-            }
-            
-            stopwatch.Stop();
-            
-            EstimateTrajectoryClosestPoint(timeStep, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            
-            (predictedPosition, _) = ComputeTrajectoryPathToTarget(1/framePerSecond, initialPosition, SysQuat.Identity, bestVelocityEstimation, alignedSpin, targetPosition, constraintShot, constraintPosition);
-            closestPointToTargetPlaceholder.transform.position = predictedPosition;
-            errorInCentimeters = Vector3.Distance(predictedPosition, targetPosition) * 1e2f;
-            
-            DebugAndTest(constraintShot, stopwatch, iterationCounter, errorInCentimeters, testing, distanceFromTarget, bestVelocityEstimation, alignedSpin);
-            
-            return (bestVelocityEstimation, alignedSpin);
-        }
-        
-        
-
-         
-        private Vector3 RotateVelocityTowardTarget(Vector3 initialPosition, Vector3 guessPosition, Vector3 targetPosition, Vector3 velocity)
-        {
-            Vector3 uGuess = guessPosition - initialPosition;
-            Vector3 uTarget = targetPosition - initialPosition;
-            
-            //compute rotation axis, perpendicular to the plane oh which uGuess and uTarget lie
-            Vector3 rotationAxis = Vector3.Cross(uGuess, uTarget).normalized;
-            
-            //compute angle between uGuess and uTarget
-            float theta = Vector3.SignedAngle(uGuess, uTarget, rotationAxis);
-            
-            //compute the rotation needed to align uGuess with uTarget
-            Quaternion rotation = Quaternion.AngleAxis(theta, rotationAxis);
-
-            //apply rotation to velocity
-            Vector3 rotatedVelocity = rotation * velocity;
-
-            return rotatedVelocity;
-        }
-
-        private Vector3 ElevateVector(Vector3 vector, float elevationAngle)
-        {
-            Vector3 dirHor = new Vector3(vector.x, 0f, vector.z).normalized;
-            Vector3 rotationAxis = Vector3.Cross(dirHor, Vector3.up);
-            Quaternion rotation = Quaternion.AngleAxis(elevationAngle, rotationAxis);
-            Vector3 rotatedVector = rotation * dirHor;
-            Vector3 rescaledVector = rotatedVector * vector.magnitude;
-            
-            return rescaledVector;
-        }
-        
-         private (Vector3,Vector3) ComputeTrajectoryPathToTarget(float deltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity,  Vector3 initialAngularVelocity, Vector3 targetPosition, bool constraintShot, Vector3 constraintPosition = default)
-        {
-            bool stopSimulation = false;
-            bool foundClosestConstraintPoint = false;
-
-            //initialize useful state variables
-            //previous state variables are needed to go back in time when the ball passes to the closest point 
-            Vector3 currentPosition = initialPosition;
-            Vector3 previousPosition = initialPosition;
-            SysQuat currentOrientation = initialOrientation;
-            SysQuat previousOrientation = initialOrientation;
-            Vector3 currentVelocity = initialVelocity;
-            Vector3 previousVelocity = initialVelocity;
-            Vector3 currentAngularVelocity = initialAngularVelocity;
-            Vector3 previousAngularVelocity = initialAngularVelocity;
-
-            Vector3 targetClosestPoint = currentPosition;
-            Vector3 constraintClosestPoint = currentPosition;
-            
-            float previousTargetError = Vector3.Distance(currentPosition, targetPosition);
-            float previousConstraintError = Vector3.Distance(currentPosition, constraintPosition);
-            while(!stopSimulation)
-            {
-                //integrate the next step on the motion
-                (Vector3 newPosition, SysQuat newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, currentPosition,  currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing);
-               // _currentTrajectory.Add(newPosition);
-                
-                //compute the new distance from the target
-                float targetError = Vector3.Distance(currentPosition, targetPosition);
-                float newTargetError = Vector3.Distance(newPosition, targetPosition);
-                
-                //if the error at frame n is < than the error at frame n-1 and < than the error at frame n+1, then the closest point is between n-1 and n+1
-                if (targetError <= previousTargetError && targetError <= newTargetError)
-                {
-                    stopSimulation = true;
-                    
-                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
-                    targetClosestPoint = previousTargetError <= newTargetError 
-                        ? RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 2, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, targetPosition, previousTargetError, targetError)
-                        : RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 2, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, targetPosition, targetError, newTargetError);
-                }
-
-                //update previous error
-                previousTargetError = targetError;
-
-                //in case of shot with constraint find the closest point of trajectory to the constraint
-                if(constraintShot && !foundClosestConstraintPoint)
-                {
-                    //compute the new distance from the target
-                    float constraintError = Vector3.Distance(currentPosition, constraintPosition);
-                    float newConstraintError = Vector3.Distance(newPosition, constraintPosition);
-
-
-                    //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
-                    if (constraintError <= previousConstraintError && constraintError <= newConstraintError)
-                    {
-                        
-                        //if the error at frame n-1 is < than the error at frame n+1, then the closest point is between n-1 and n, otherwise between n and n+1
-                        constraintClosestPoint = previousConstraintError <= newConstraintError
-                            ? RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 4, previousPosition, previousOrientation, previousVelocity, previousAngularVelocity, BallState.Bouncing, constraintPosition, previousConstraintError, constraintError)
-                            : RecursiveClosestPointSearch(deltaTime / 2, deltaTime / 4, currentPosition, currentOrientation, currentVelocity, currentAngularVelocity, BallState.Bouncing, constraintPosition, constraintError, newConstraintError);
-                        
-                        foundClosestConstraintPoint = true;
-                    }
-
-                    //update previous constraint error
-                    previousConstraintError = constraintError;
-                }
-                
-                //update previous state variables
-                previousPosition = currentPosition;
-                previousVelocity = currentVelocity;
-                previousAngularVelocity = currentAngularVelocity;
-                previousOrientation = currentOrientation;
-                
-                //update current state variables
-                currentVelocity = newVelocity;
-                currentPosition = newPosition;
-                currentAngularVelocity = newAngularVelocity;
-                currentOrientation = newOrientation;
-            }
-            
-            return (targetClosestPoint, constraintClosestPoint);
-        }
-        
 }
 
 
