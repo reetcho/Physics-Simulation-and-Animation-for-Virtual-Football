@@ -1,9 +1,10 @@
 # Controllable Ball Physics Simulation
-This repository contains a real-time simulation of a spinning football developed in Unity for my Master’s Thesis in Human-Centered Artificial Intelligence at the Technical University of Denmark (DTU).
+This repository contains the project for my Master’s Thesis in Human-Centered Artificial Intelligence at Technical University of Denmark (DTU).
+It is a real-time, controllable simulation of a spinning football built in Unity/C#.
 
-The simulation models aerodynamic force, bounces, and ground friction.
-It includes multiple numerical integration methods—such as Semi-Implicit Euler, Explicit Euler, and Runge–Kutta—implemented and compared to evaluate accuracy and real-time performance.
+The simulation models all major physical forces on the ball—aerodynamic forces, , bounces, and ground friction—to reproduce a realistic behaviour.
+Multiple numerical integration schemes are implemented and compared for accuracy and performance, including Explicit Euler, Semi-Implicit Euler and Runge–Kutta.
 
-Full technical details are available in the Master’s Thesis PDF included in this repository.
+The project also includes shot-prediction systems that compute the initial values needed for the ball to reach a specified target.
 
 A playable build of the project is available on [itch.io](https://reetcho.itch.io). 
