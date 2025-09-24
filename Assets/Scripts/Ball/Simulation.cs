@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Profiling;
 using UnityEngine.Serialization;
+using Utils;
 using Debug = UnityEngine.Debug;
 using Quaternion = UnityEngine.Quaternion;
 using SysQuat = System.Numerics.Quaternion;
@@ -57,6 +58,7 @@ public class Simulation : MonoBehaviour
         [SerializeField] private GameObject closestPointToTargetPlaceholder;
         [SerializeField] private GameObject constraint;
         [SerializeField] private GameObject closestPointToConstraintPlaceholder;
+        [SerializeField] private DisplayShotComputation displayShotComputation;
         public InteractionController interactionController;
         private readonly List<List<Vector3>> _precalculationTrajectories = new List<List<Vector3>>();
         private List<Vector3> _currentTrajectory;
@@ -108,12 +110,6 @@ public class Simulation : MonoBehaviour
 
             ball.AddTrajectoryFrame(_timeToComputeFrame);
         }
-#if UNITY_EDITOR     
-        void OnDrawGizmos()
-        {
-            DisplayComputedTrajectories();
-        }
-#endif
         
     #endregion
     
@@ -1338,6 +1334,7 @@ public class Simulation : MonoBehaviour
                 Debug.Log("Error: " + error.ToString("F1") + " cm");
 
                 interactionController.ShowComputationTime(computationTimeInMilliseconds, error);
+                displayShotComputation.DisplayComputedTrajectories(_precalculationTrajectories);
 
                 //saving the data for the test
                 if (testing && iterationCounter > 1)
@@ -1410,32 +1407,7 @@ public class Simulation : MonoBehaviour
                 ball.orientation = interpolatedRot;
             }
         }
-    
-#if UNITY_EDITOR
-        //display predicted trajectories gizmos
-        private void DisplayComputedTrajectories()
-        {
-            if (!Application.isPlaying)
-                return;
-        
-            Color[] colorArray = new Color[_precalculationTrajectories.Count];
-            for (int i = 1; i <= _precalculationTrajectories.Count; i++)
-            {
-                float t = (float)i / _precalculationTrajectories.Count;
-                colorArray[i-1] = Color.Lerp(Color.green, Color.blue, t);
-            }
 
-            for (int i = 0; i < _precalculationTrajectories.Count; i++)
-            {
-
-                Handles.color = colorArray[i]; 
-
-                Vector3[] linePoints = _precalculationTrajectories[i].ToArray();
-
-                Handles.DrawAAPolyLine(7.5f, linePoints);
-            }
-        }
-#endif
     #endregion
     
     #region Getters

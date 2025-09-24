@@ -1,10 +1,12 @@
 ﻿using System.Collections.Generic;
 using TMPro;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
+using Utils;
 
 public class InteractionController : MonoBehaviour, IDragHandler
 {
@@ -12,7 +14,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
     public RectTransform handle;
     public Slider chargingSlider;
     public LineRenderer directionLine;
-    [FormerlySerializedAs("ballPhysics")] public Simulation simulation;
+    public Simulation simulation;
     public Ball ball;
     public TextMeshProUGUI UItextModeInfo;
     public TextMeshProUGUI UItextShotInfo;
@@ -44,6 +46,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
     public bool replay = false;
     
     public Ball simulationBall;
+    public DisplayShotComputation displayShotComputation;
 
     void Start()
     {
@@ -144,6 +147,7 @@ public class InteractionController : MonoBehaviour, IDragHandler
         if (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame && !simulation.useFrameByFrameMode)
         {
             simulation.Reset();
+            displayShotComputation.DeleteComputedTrajectories();
             normalizedValue = Vector2.zero;
             UpdateHandlePosition();
             direction = Vector3.right;
