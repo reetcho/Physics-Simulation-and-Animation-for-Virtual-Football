@@ -70,16 +70,6 @@ public class InteractionController : MonoBehaviour, IDragHandler
             kickUI.SetActive(true);
             UpdateDirectionLine();
         }
-        
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            // Stop the game in the editor
-        #if UNITY_EDITOR
-                    UnityEditor.EditorApplication.isPlaying = false;
-        #else
-                    Application.Quit();
-        #endif
-        }
 
         if (Gamepad.current != null && simulation.ball.state == BallState.Stopped && !simulation.useFrameByFrameMode)
         {
