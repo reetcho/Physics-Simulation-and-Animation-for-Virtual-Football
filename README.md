@@ -1,4 +1,5 @@
-# Controllable Ball Physics Simulation
+# Physics Simulation and Animation for Virtual Football
+
 This repository contains the project for my Master’s Thesis in Human-Centered Artificial Intelligence at Technical University of Denmark (DTU).
 It is a real-time, controllable simulation of a football built in Unity/C#.
 
