@@ -2,11 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 using UnityEngine;
-using UnityEngine.Profiling;
 using Utils;
 using Debug = UnityEngine.Debug;
 using Quaternion = UnityEngine.Quaternion;
@@ -39,7 +35,7 @@ public class Simulation : MonoBehaviour
         [Range(0, 10)][SerializeField] private float maxErrorInCentimeters = 1f;
         [Range(0, 90)] [SerializeField] private float elevationAngleMaximumLimit = 30f;
         [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit = 0f;
-        [SerializeField] private bool adjustSpeed = false;
+        [SerializeField] private bool adjustSpeed;
         [SerializeField] private float maxSpeedIncrease = 1.5f;
         //[SerializeField] private float maxSpeedDecrease = 0.5f;
         [Range(1, 100)] [SerializeField] private int speedCorrectionSteps = 2;
@@ -52,7 +48,6 @@ public class Simulation : MonoBehaviour
         public float ContinuousFrameCount { private get; set; }
         
         [Header("Other")]
-        [SerializeField] private bool useAerodynamicForces;
         [SerializeField] private GameObject target;
         [SerializeField] private GameObject closestPointToTargetPlaceholder;
         [SerializeField] private GameObject constraint;
@@ -81,17 +76,9 @@ public class Simulation : MonoBehaviour
         void Update()
         {
             Time.fixedDeltaTime = 1/framePerSecond;
-            if(useAerodynamicForces)
-            {
-                _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up;
-                _kinematicViscosityOfAir = dynamicViscosityOfAir * airDensity;
-            }
-            else
-            {
-                _buoyantForce = Vector3.zero;
-                _kinematicViscosityOfAir = 0f;
-            }
-
+ 
+            _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up;
+            _kinematicViscosityOfAir = dynamicViscosityOfAir * airDensity;
         }
         
         void FixedUpdate()
@@ -117,9 +104,7 @@ public class Simulation : MonoBehaviour
         {
             //given the current state of the ball, the motion is integrated and the new state of the ball after delta time is returned
             Stopwatch stopwatch = Stopwatch.StartNew();
-            Profiler.BeginSample("IntegrateMotion");
             (Vector3 newPosition, SysQuat newOrientation, Vector3 newVelocity, Vector3 newAngularVelocity) = IntegrateMotion(deltaTime, targetBall.position, QuaternionUtils.ToNumerics(targetBall.orientation), targetBall.velocity, targetBall.angularVelocity, targetBall.state);
-            Profiler.EndSample();
             stopwatch.Stop();
             _timeToComputeFrame = stopwatch.Elapsed.TotalMilliseconds;
             
@@ -340,7 +325,7 @@ public class Simulation : MonoBehaviour
             private (Vector3, SysQuat, Vector3, Vector3) ComputePostCollisionVelocities(float collisionDeltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallState state)
             {
                 //here the movement is integrated until the moment the ball collides with the ground
-                (Vector3 collisionPoint, SysQuat collisionOrientation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                (Vector3 collisionPosition, SysQuat collisionOrientation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
                 
                 Vector3 velocityAfterCollision = new Vector3();
                 Vector3 angularVelocityAfterCollision = new Vector3();
@@ -365,7 +350,7 @@ public class Simulation : MonoBehaviour
                 
                 //calculate the remaining time until the end of the frame and the  is integrated using it
                 float remainingTime = Time.fixedDeltaTime - collisionDeltaTime;
-                return IntegrateMotion(remainingTime, collisionPoint, collisionOrientation, velocityAfterCollision, angularVelocityAfterCollision, state);
+                return IntegrateMotion(remainingTime, collisionPosition, collisionOrientation, velocityAfterCollision, angularVelocityAfterCollision, state);
             }
             
         #endregion
@@ -375,7 +360,7 @@ public class Simulation : MonoBehaviour
             //this method computes the force caused by the air resistance
             private Vector3 CalculateDragForce(Vector3 velocity, Vector3 angularVelocity)
             {
-                if(!useAerodynamicForces || velocity.magnitude < 1e-3)
+                if(velocity.magnitude < 1e-3)
                     return Vector3.zero;
                 
                 Vector3 dragForce;
@@ -407,7 +392,7 @@ public class Simulation : MonoBehaviour
             
             private Vector3 CalculateMagnusForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                if(!useAerodynamicForces || velocity.magnitude < 1e-3 || angularVelocity.magnitude < 1e-3 || state != BallState.Bouncing)
+                if(velocity.magnitude < 1e-3 || angularVelocity.magnitude < 1e-3 || state != BallState.Bouncing)
                     return Vector3.zero;
                 
                 Vector3 magnusForce;
@@ -542,7 +527,7 @@ public class Simulation : MonoBehaviour
             
             private Vector3 CalculateSpinDegradation(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                if(state != BallState.Bouncing || angularVelocity.magnitude < 1e-6 || !useAerodynamicForces)
+                if(state != BallState.Bouncing || angularVelocity.magnitude < 1e-6)
                     return Vector3.zero;
     
                 float totalForce;

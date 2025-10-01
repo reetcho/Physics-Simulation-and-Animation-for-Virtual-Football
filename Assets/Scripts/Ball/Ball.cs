@@ -134,14 +134,6 @@ public class Ball : MonoBehaviour
         }
         private void ResetValues()
         {
-            //TODO remove this
-            /*
-            position = new Vector3(0, radius, 0);
-            velocity = new Vector3(20, 10, 0);
-            angularVelocity = new Vector3(0, 15, 10);
-            state = BallState.Bouncing;
-            */
-            
             velocity = Vector3.zero;
             angularVelocity = Vector3.zero;
             state = BallState.Stopped;
