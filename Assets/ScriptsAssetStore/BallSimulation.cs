@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using UnityEngine;
+using UnityEngine.Serialization;
 using SysQuat = System.Numerics.Quaternion;
 using Vector3 = UnityEngine.Vector3;
 
@@ -10,8 +11,8 @@ public class BallSimulation : MonoBehaviour
         
         [Header("Constants")]
         [SerializeField] private float airDensity = 1.2f;
-        [SerializeField] private float dynamicViscosityOfAir = 1.81f * 1e-5f;
-        private static readonly float Gravity = 9.81f; 
+        [SerializeField] private float gravity = 9.81f; 
+        
         private const float TimeStepThreshold = 1e-9f;
         private Vector3 _gravitationalForce;
         private Vector3 _buoyantForce;
@@ -28,8 +29,8 @@ public class BallSimulation : MonoBehaviour
             Application.targetFrameRate = -1;
             Time.fixedDeltaTime = 1/framePerSecond;
             
-            _gravitationalForce = Gravity * ball.mass * Vector3.down;
-            _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * Gravity * Vector3.up;
+            _gravitationalForce = gravity * ball.mass * Vector3.down;
+            _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * gravity * Vector3.up;
         }
         
         void FixedUpdate()

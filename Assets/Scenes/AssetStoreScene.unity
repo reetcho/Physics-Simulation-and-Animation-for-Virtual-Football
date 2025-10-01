@@ -222,7 +222,7 @@ Transform:
   m_GameObject: {fileID: 509231208}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: -0.06, z: 0}
   m_LocalScale: {x: 100, y: 100, z: 100}
   m_ConstrainProportionsScale: 1
   m_Children: []
@@ -449,7 +449,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ball: {fileID: 1993588328}
   airDensity: 1.2
-  dynamicViscosityOfAir: 0.0000181
+  gravity: 9.81
   integrationMethod: 1
   framePerSecond: 60
 --- !u!114 &1993588328
@@ -563,8 +563,8 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 5, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
+  m_LocalScale: {x: 2, y: 2, z: 2}
+  m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using UnityEngine.Serialization;
 using Quaternion = UnityEngine.Quaternion;
 using Vector3 = UnityEngine.Vector3;
 
@@ -13,7 +12,7 @@ public class BallProperties : MonoBehaviour
         public BallStates state;
         
         [Header("Ball properties")]
-        public float radius = 0.11f;
+        [Range(0.001f, 100)] public float radius = 0.11f;
         public float mass = 0.43f;
         public float inertialMomentumConstant = 2f/3f; //value for a hollow sphere 
         public float InertialMomentum { get; private set; } //assumption of thin sphere -> 2/3 * mass * radius^2
@@ -41,12 +40,13 @@ public class BallProperties : MonoBehaviour
     #region Unity
         private void Awake()
         {
-            transform.localScale = new Vector3(radius, radius, radius)*2;
             InertialMomentum = inertialMomentumConstant * mass * radius * radius;
             
             resetPosition = transform.position;
             position = resetPosition;
             orientation = transform.rotation;
+            radius = transform.localScale.x / 2;
+            transform.localScale = new Vector3(radius, radius, radius) * 2;
         }
         
         private void LateUpdate()
@@ -59,11 +59,27 @@ public class BallProperties : MonoBehaviour
         {
             CheckIsMoving();
         }
+
+        private void Update()
+        {
+            transform.localScale = new Vector3(radius, radius, radius) * 2;
+
+            if (transform.position.y - radius > 0 && state == BallStates.Stopped)
+            {
+                state = BallStates.Bouncing;
+            }
+            
+            if (transform.position.y - radius < 0 && state == BallStates.Stopped)
+            {
+                position.y = radius;
+                transform.position = position;
+            }
+        }
         
     #endregion
 
     #region Energy
-        public float CalculatePotentialEnergy()
+        private float CalculatePotentialEnergy()
         {
             if(state != BallStates.Bouncing)
                 return 0f;
@@ -71,17 +87,17 @@ public class BallProperties : MonoBehaviour
             return mass * Simulation.Gravity * (position.y - radius);
         }
 
-        public float CalculateKineticEnergy()
+        private float CalculateKineticEnergy()
         {
             return 0.5f * mass * velocity.magnitude * velocity.magnitude;
         }
 
-        public float CalculateRotationalEnergy()
+        private float CalculateRotationalEnergy()
         {
             return 0.5f * InertialMomentum * angularVelocity.magnitude * angularVelocity.magnitude;
         }
 
-        public float CalculateTotalEnergy()
+        private float CalculateTotalEnergy()
         {
             float kineticEnergy = CalculateKineticEnergy();
             float potentialEnergy = CalculatePotentialEnergy();
