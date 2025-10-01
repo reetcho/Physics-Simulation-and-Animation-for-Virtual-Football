@@ -44,7 +44,7 @@ public class Simulation : MonoBehaviour
         [SerializeField] private float maxSpeedIncrease = 1.5f;
         //[SerializeField] private float maxSpeedDecrease = 0.5f;
         [Range(1, 100)] [SerializeField] private int speedCorrectionSteps = 2;
-        [FormerlySerializedAs("useMethdoB")] [SerializeField] private bool useMethodB;
+        [SerializeField] private bool useMethodB;
 
         [Header("Frame History")] 
         public bool useFrameByFrameMode;
