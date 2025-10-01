@@ -60,8 +60,6 @@ public class Ball : MonoBehaviour
             resetPosition = transform.position;
             position = resetPosition;
             orientation = transform.rotation;
-
-            Reset();
         }
         
         private void LateUpdate()

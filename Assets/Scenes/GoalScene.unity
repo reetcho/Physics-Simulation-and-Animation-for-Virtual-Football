@@ -631,7 +631,6 @@ MonoBehaviour:
   useMethodB: 0
   useFrameByFrameMode: 0
   interpolateFrames: 1
-  useAerodynamicForces: 1
   target: {fileID: 1273250294}
   closestPointToTargetPlaceholder: {fileID: 36080666}
   constraint: {fileID: 1162758408}
@@ -2883,7 +2882,7 @@ MonoBehaviour:
   velocity: {x: 0, y: 0, z: 0}
   orientation: {x: 0, y: 0, z: 0, w: 1}
   angularVelocity: {x: 0, y: 0, z: 0}
-  state: 3
+  state: 0
   radius: 0.11
   mass: 0.43
   inertialMomentumConstant: 0.6666667
