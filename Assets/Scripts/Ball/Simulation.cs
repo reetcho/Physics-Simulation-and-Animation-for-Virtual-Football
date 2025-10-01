@@ -7,7 +7,6 @@ using UnityEditor;
 #endif
 using UnityEngine;
 using UnityEngine.Profiling;
-using UnityEngine.Serialization;
 using Utils;
 using Debug = UnityEngine.Debug;
 using Quaternion = UnityEngine.Quaternion;
