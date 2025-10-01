@@ -31,16 +31,16 @@ public class Simulation : MonoBehaviour
         
         [Header("Simulation")]
         [SerializeField] private IntegrationMethod integrationMethod;
-        [SerializeField] private float framePerSecond;
+        [SerializeField] private float framePerSecond = 60;
         
         [Header("Targeted shot")]
-        [SerializeField] private int computationFrameRate;
-        [SerializeField] private float constraintMaximumError;
-        [SerializeField] private int maxIterations;
-        [Range(0, 10)][SerializeField] private float maxErrorInCentimeters;
-        [Range(0, 90)] [SerializeField] private float elevationAngleMaximumLimit;
-        [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit;
-        [SerializeField] private bool adjustSpeed;
+        [SerializeField] private int computationFrameRate = 60;
+        [SerializeField] private float constraintMaximumError = 10;
+        [SerializeField] private int maxIterations = 10;
+        [Range(0, 10)][SerializeField] private float maxErrorInCentimeters = 1f;
+        [Range(0, 90)] [SerializeField] private float elevationAngleMaximumLimit = 30f;
+        [Range(0, 90)] [SerializeField] private float elevationAngleMinimumLimit = 0f;
+        [SerializeField] private bool adjustSpeed = false;
         [SerializeField] private float maxSpeedIncrease = 1.5f;
         //[SerializeField] private float maxSpeedDecrease = 0.5f;
         [Range(1, 100)] [SerializeField] private int speedCorrectionSteps = 2;
@@ -48,7 +48,7 @@ public class Simulation : MonoBehaviour
 
         [Header("Frame History")] 
         public bool useFrameByFrameMode;
-        public bool interpolateFrames;
+        public bool interpolateFrames = true;
         public int FrameCount { private get; set; }
         public float ContinuousFrameCount { private get; set; }
         
@@ -416,7 +416,7 @@ public class Simulation : MonoBehaviour
                 if (ball.useConstantCoefficients)
                 {
                     //use constant linear drag coefficient
-                    magnusForce = ball.constantDragCoefficient * Mathf.PI * airDensity * Mathf.Pow(ball.radius, 3) * Vector3.Cross(angularVelocity, velocity);
+                    magnusForce = ball.constantLiftCoefficient * Mathf.PI * airDensity * Mathf.Pow(ball.radius, 3) * Vector3.Cross(angularVelocity, velocity);
                 }
                 else
                 //use empirical model

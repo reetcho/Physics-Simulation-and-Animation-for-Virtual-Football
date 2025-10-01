@@ -13,20 +13,20 @@ public class Ball : MonoBehaviour
         public BallState state;
         
         [Header("Ball properties")]
-        public float radius;
-        public float mass;
+        public float radius = 0.11f;
+        public float mass = 0.43f;
         public float inertialMomentumConstant = 2f/3f; //hollow sphere 
         public float InertialMomentum { get; private set; } //assumption of thin sphere -> 2/3 * mass * radius^2
         
         [Header("Restitution coefficients")]
-        [Range(0, 1)] public float coefficientOfVerticalRestitution;
-        [Range(-1, 1)] public float coefficientOfHorizontalRestitution;
-        [Range(0, 1)] public float coefficientOfVerticalAxisSpinRestitution; //percentage of angular velocity around y-axis that is preserved after the ball bounces on the ground
+        [Range(0, 1)] public float coefficientOfVerticalRestitution = 0.85f;
+        [Range(-1, 1)] public float coefficientOfHorizontalRestitution = -0.75f;
+        [Range(0, 1)] public float coefficientOfVerticalAxisSpinRestitution = 0.95f; //percentage of angular velocity around y-axis that is preserved after the ball bounces on the ground
         
         [Header("Ground friction forces")]
-        [Range(0, 1)] public float coefficientOfSlidingFriction;
-        [Range(0, 1)] public float coefficientOfRollingFriction; 
-        [FormerlySerializedAs("coefficientOfVerticalAxisSpinningFriction")] [Range(0, 1)] public float coefficientOfVerticalAxisSpinningDamping; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
+        [Range(0, 1)] public float coefficientOfSlidingFriction = 0.25f;
+        [Range(0, 1)] public float coefficientOfRollingFriction = 0.15f; 
+        [Range(0, 1)] public float coefficientOfVerticalAxisSpinningDamping = 0.04f; //friction that acts on the spin about the y-axis when the ball is rolling/sliding
         
         [Header("Aerodynamic forces")]
         public float dragCoefficient;
@@ -37,10 +37,10 @@ public class Ball : MonoBehaviour
         //drag transition sharpness speed
         public float dragTransitionSlope = 1.309f;
         
-        public bool useConstantCoefficients;
-        public float constantDragCoefficient;
-        public float constantLiftCoefficient;
-        public float constantSpinDecayCoefficient;
+        public bool useConstantCoefficients = true;
+        public float constantDragCoefficient = 0.4f;
+        public float constantLiftCoefficient = 0.3f;
+        public float constantSpinDecayCoefficient = 0.01f;
         
         [Header("Other")]
         public Vector3 resetPosition;
