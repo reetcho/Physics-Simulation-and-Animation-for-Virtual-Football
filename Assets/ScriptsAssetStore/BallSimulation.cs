@@ -1,6 +1,8 @@
+using System;
 using System.Diagnostics;
 using UnityEngine;
 using UnityEngine.Serialization;
+using Debug = UnityEngine.Debug;
 using SysQuat = System.Numerics.Quaternion;
 using Vector3 = UnityEngine.Vector3;
 
@@ -13,13 +15,19 @@ public class BallSimulation : MonoBehaviour
         [SerializeField] private float airDensity = 1.2f;
         [SerializeField] private float gravity = 9.81f; 
         
-        private const float TimeStepThreshold = 1e-9f;
+        private const float TimeStepThreshold = 1e-6f;
         private Vector3 _gravitationalForce;
         private Vector3 _buoyantForce;
         
         [Header("Simulation")]
         [SerializeField] private IntegrationMethod integrationMethod;
         [SerializeField] private float framePerSecond = 60;
+        
+        [Header("Frame History")] 
+        public bool useFrameByFrameMode;
+        public bool interpolateFrames = true;
+        public int FrameCount { private get; set; }
+        public float ContinuousFrameCount { private get; set; }
         
     #endregion
 
@@ -35,16 +43,35 @@ public class BallSimulation : MonoBehaviour
         
         void FixedUpdate()
         {
+            //TODO ELIMINARE
+            if (useFrameByFrameMode)
+            {
+                HandleFrameByFrame();
+                return;
+            }
+            
             if (ball.state == BallStates.Stopped)
                 return;
             
             ComputeNewFrame(Time.fixedDeltaTime, ball);
+            
+            ball.AddTrajectoryFrame(0);
         }
-        
-    #endregion
+
+        private void Update()
+        {
+            Application.targetFrameRate = -1;
+            Time.fixedDeltaTime = 1/framePerSecond;
+            
+            _gravitationalForce = gravity * ball.mass * Vector3.down;
+            _buoyantForce = 4f / 3f * Mathf.PI * Mathf.Pow(ball.radius, 3) * airDensity * gravity * Vector3.up;
+        }
+
+        #endregion
     
     #region Simulation
-        private void ComputeNewFrame(float deltaTime, BallProperties targetBall)
+
+    public void ComputeNewFrame(float deltaTime, BallProperties targetBall)
         {
             //given the current state of the ball, the motion is integrated and the new state of the ball after delta time is returned
             Stopwatch stopwatch = Stopwatch.StartNew();
@@ -52,7 +79,8 @@ public class BallSimulation : MonoBehaviour
             stopwatch.Stop();
             
             //checks if there was a collision and if so handles it
-            if (newPosition.y - targetBall.radius < 0f)
+            Collider[] hits = Physics.OverlapSphere(newPosition, ball.radius);
+            if (hits.Length > 0)
                 (newPosition, newOrientation, newVelocity, newAngularVelocity, targetBall.state) = HandleGroundCollisionAndBounce(deltaTime, targetBall.position, QuaternionUtils.ToNumerics(targetBall.orientation), targetBall.velocity, targetBall.angularVelocity, targetBall.state);
 
             Vector3 previousVelocity = targetBall.velocity;
@@ -233,42 +261,59 @@ public class BallSimulation : MonoBehaviour
             private (Vector3, SysQuat, Vector3, Vector3, BallStates) HandleGroundCollisionAndBounce(float deltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallStates state)
             {
                 //finds moment of collision
-                float collisionDeltaTime = RecursiveCollisionDetection(deltaTime / 2, deltaTime / 2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                (float collisionDeltaTime, Vector3 collisionPoint, Vector3 collisionPosition) = IterativeCollisionDetection(deltaTime / 2, deltaTime / 2, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
                 
                 //updates position, orientation, velocity and angular velocity after the collision
-                (Vector3 positionAfterCollision, SysQuat orientationAfterCollision, Vector3 velocityAfterCollision, Vector3 angularVelocityAfterCollision) = ComputePostCollisionVelocities(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                (Vector3 positionAfterCollision, SysQuat orientationAfterCollision, Vector3 velocityAfterCollision, Vector3 angularVelocityAfterCollision) = ComputePostCollisionVelocities(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state, collisionPoint);
                 
                 //sets the new state to sliding if the vertical component of the velocity is small enough
-                if (velocityAfterCollision.y < 1e-1)
+                if (Mathf.Abs(Vector3.Dot(Vector3.up, (collisionPosition - collisionPoint).normalized) - 1) < 1e-1 && velocityAfterCollision.y < 1e-1)
                 {
                     velocityAfterCollision.y = 0f;
-                    positionAfterCollision.y = ball.radius;
+                    positionAfterCollision.y = ball.radius + collisionPoint.y;
                     state = BallStates.Sliding;
+                }
+                else
+                {
+                    state = BallStates.Bouncing;
                 }
                 
                 return (positionAfterCollision, orientationAfterCollision, velocityAfterCollision, angularVelocityAfterCollision, state);
             }
             
             //this method is called recursively to binary search the moment of collision with the ground
-            private float RecursiveCollisionDetection(float deltaTime, float step, Vector3 pCurrent, SysQuat qCurrent, Vector3 vCurrent, Vector3 wCurrent, BallStates state)
+            private (float, Vector3, Vector3) IterativeCollisionDetection(float deltaTime, float step, Vector3 pCurrent, SysQuat qCurrent, Vector3 vCurrent, Vector3 wCurrent, BallStates state)
             {
                 //predict new position
                 (Vector3 newPosition, _, _, _) = IntegrateMotion(deltaTime, pCurrent, qCurrent, vCurrent, wCurrent, state);
     
                 //adjust delta time: go back if below ground, forward if above
-                float newDeltaTime = newPosition.y - ball.radius < 0f ? deltaTime - step / 2 : deltaTime + step / 2;
+                Collider[] hits = Physics.OverlapSphere(newPosition, ball.radius);
+                float newDeltaTime = hits.Length > 0 ? deltaTime - step / 2 : deltaTime + step / 2;
     
                 //stop if step is below precision threshold
-                if (step < TimeStepThreshold)
-                    return newDeltaTime;
+                if (step < TimeStepThreshold && hits.Length > 0)
+                    return (newDeltaTime, hits[0].ClosestPoint(newPosition), newPosition);
     
                 //recurse with new delta time and halved step size
-                return RecursiveCollisionDetection(newDeltaTime, step/2, pCurrent, qCurrent, vCurrent, wCurrent, state);
+                return IterativeCollisionDetection(newDeltaTime, step/2, pCurrent, qCurrent, vCurrent, wCurrent, state);
             }
-            private (Vector3, SysQuat, Vector3, Vector3) ComputePostCollisionVelocities(float collisionDeltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallStates state)
+            
+            private (Vector3, SysQuat, Vector3, Vector3) ComputePostCollisionVelocities(float collisionDeltaTime, Vector3 initialPosition, SysQuat initialOrientation, Vector3 initialVelocity, Vector3 initialAngularVelocity, BallStates state, Vector3 contactPoint)
             {
                 //here the movement is integrated until the moment the ball collides with the ground
-                (Vector3 collisionPoint, SysQuat collisionOrientation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                (Vector3 collisionPosition, SysQuat collisionOrientation, Vector3 velocityBeforeCollision, Vector3 angularVelocityBeforeCollision) = IntegrateMotion(collisionDeltaTime, initialPosition, initialOrientation, initialVelocity, initialAngularVelocity, state);
+                
+                
+                // Step 2: calcola la normale di contatto
+                Vector3 n = (collisionPosition - contactPoint).normalized;
+
+                // Step 3: costruisci la matrice di rotazione R che porta n in Vector3.up
+                Quaternion R = Quaternion.FromToRotation(n, Vector3.up);
+
+                // Step 4: ruota velocità nel frame “orizzontale”
+                velocityBeforeCollision = R * velocityBeforeCollision;
+                angularVelocityBeforeCollision = R * angularVelocityBeforeCollision;
                 
                 Vector3 velocityAfterCollision = new Vector3();
                 Vector3 angularVelocityAfterCollision = new Vector3();
@@ -293,7 +338,12 @@ public class BallSimulation : MonoBehaviour
                 
                 //calculate the remaining time until the end of the frame and the  is integrated using it
                 float remainingTime = Time.fixedDeltaTime - collisionDeltaTime;
-                return IntegrateMotion(remainingTime, collisionPoint, collisionOrientation, velocityAfterCollision, angularVelocityAfterCollision, state);
+                
+                
+                velocityAfterCollision = Quaternion.Inverse(R) * velocityAfterCollision;
+                angularVelocityAfterCollision = Quaternion.Inverse(R) * angularVelocityAfterCollision;
+                
+                return IntegrateMotion(remainingTime, collisionPosition, collisionOrientation, velocityAfterCollision, angularVelocityAfterCollision, state);
             }
             
         #endregion
@@ -477,6 +527,66 @@ public class BallSimulation : MonoBehaviour
             k.Q = QuaternionUtils.QuaternionDerivative(orientation, angularVelocity);
 
             return k;
+        }
+        
+        public void Kick(Vector3 direction, float speed, Vector3 spin)
+        {
+                
+            ball.velocity = direction * speed;
+            ball.angularVelocity = AlignSpinWithVelocityDirection(ball.velocity, spin);
+            ball.state = ball.velocity.y > 0 ? BallStates.Bouncing : BallStates.Sliding;
+                
+            ball.AddTrajectoryFrame();
+        }
+        
+        private Vector3 AlignSpinWithVelocityDirection(Vector3 velocity, Vector3 spin)
+        {
+            //horizontal direction of velocity
+            Vector3 direction = new Vector3(velocity.x, 0f, velocity.z).normalized;
+
+            //direction to align spin
+            Vector3 alignedSpinDirection = Vector3.Cross(Vector3.up, direction);
+
+            //horizontal magnitude of spin
+            float horizontalSpinMagnitude = -spin.z;
+
+            //rescale aligned direction to match original spin magnitude
+            return alignedSpinDirection * horizontalSpinMagnitude + new Vector3(0f, spin.y, 0f);
+        }
+        
+        private void HandleFrameByFrame()
+        {
+            if (!interpolateFrames)
+            {
+                if (FrameCount < ball.Frames.Length && ball.Frames.Length > 0)
+                {
+                    ball.position = ball.Frames[FrameCount].Position;
+                    ball.orientation = ball.Frames[FrameCount].Orientation;
+                }
+            }
+            else
+            {
+                int currentIndex = FrameCount;
+                int nextIndex = FrameCount + 1;
+                    
+                float t = Mathf.Clamp01(ContinuousFrameCount - currentIndex);
+
+                if (nextIndex > ball.Frames.Length - 1)
+                {
+                    nextIndex = ball.OldestFrameIndex != 0 ? 0 : currentIndex;
+                }
+
+                if (nextIndex >= ball.NewestFrameIndex && ball.OldestFrameIndex == 0)
+                {
+                    nextIndex = currentIndex;
+                }
+
+                Vector3 interpolatedPos = Vector3.Lerp(ball.Frames[currentIndex].Position, ball.Frames[nextIndex].Position, t);
+                Quaternion interpolatedRot = Quaternion.Slerp(ball.Frames[currentIndex].Orientation, ball.Frames[nextIndex].Orientation, t);
+
+                ball.position = interpolatedPos;
+                ball.orientation = interpolatedRot;
+            }
         }
         
     #endregion

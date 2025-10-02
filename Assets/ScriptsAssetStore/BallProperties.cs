@@ -34,6 +34,11 @@ public class BallProperties : MonoBehaviour
         
         [Header("Other")]
         public Vector3 resetPosition;
+        
+                
+        public Frames[] Frames { get; private set; } = new Frames[1000];
+        public int NewestFrameIndex { get; private set; }
+        public int OldestFrameIndex { get; private set; }
     
     #endregion 
         
@@ -63,11 +68,6 @@ public class BallProperties : MonoBehaviour
         private void Update()
         {
             transform.localScale = new Vector3(radius, radius, radius) * 2;
-
-            if (transform.position.y - radius > 0 && state == BallStates.Stopped)
-            {
-                state = BallStates.Bouncing;
-            }
             
             if (transform.position.y - radius < 0 && state == BallStates.Stopped)
             {
@@ -132,6 +132,57 @@ public class BallProperties : MonoBehaviour
         }
     
     #endregion
+    
+    
+    public void AddTrajectoryFrame(double timeToComputeFrame = 0f)
+    {
+        if (state != BallStates.Stopped)
+        {
+            Frames frames = new Frames(position, orientation, velocity, angularVelocity, state, timeToComputeFrame);
+            Frames[NewestFrameIndex] = frames;
+            NewestFrameIndex++;
+                
+            if(NewestFrameIndex >= Frames.Length)
+                NewestFrameIndex = 0;
+                
+            if(NewestFrameIndex == OldestFrameIndex)
+                OldestFrameIndex++;
+               
+            if(OldestFrameIndex >= Frames.Length)
+                OldestFrameIndex = 0;
+        }
+    }
+    
+    void OnDrawGizmos()
+    {
+        DrawTrajectory();
+    }
+    private void DrawTrajectory()
+    {
+        if(Frames.Length > 0)
+        {
+            foreach (Frames frame in Frames)
+            {
+                if(frame != null)
+                {
+                    switch (frame.State)
+                    {
+                        case BallStates.Bouncing:
+                            Gizmos.color = Color.red;
+                            break;
+                        case BallStates.Sliding:
+                            Gizmos.color = Color.blue;
+                            break;
+                        case BallStates.Rolling:
+                            Gizmos.color = Color.green;
+                            break;
+                    }
+                    Gizmos.DrawSphere(frame.Position, radius / 4);
+                }
+            }
+        }
+    }
+
 }
 
 public enum BallStates
