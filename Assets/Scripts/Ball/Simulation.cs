@@ -517,7 +517,8 @@ public class Simulation : MonoBehaviour
                     frictionTorque += angularAcceleration * ball.InertialMomentum;
                 }
 
-                if (angularVelocity.y < 1)
+                //introduced damping
+                if (Mathf.Abs(angularVelocity.y) < 1)
                 {
                     frictionTorque.y *= Mathf.Abs(angularVelocity.y);
                 }
