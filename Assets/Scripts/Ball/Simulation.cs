@@ -448,9 +448,9 @@ public class Simulation : MonoBehaviour
                     float theta = (90f - Vector3.Angle(angularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
 
                     //compute direction of the velocity of the contact point
-                    Vector3 collisionPointVelocity = (velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity)).normalized;
+                    Vector3 collisionPointVelocityDirection = (velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity)).normalized;
                     
-                    frictionForce = -ball.coefficientOfSlidingFriction * normalForce * collisionPointVelocity;
+                    frictionForce = -ball.coefficientOfSlidingFriction * normalForce * collisionPointVelocityDirection;
                 }
                 else
                 {
@@ -507,10 +507,10 @@ public class Simulation : MonoBehaviour
                     float theta = (90f - Vector3.Angle(angularVelocity.normalized, Vector3.up)) * Mathf.Deg2Rad;
 
                     //compute direction of the velocity of the contact point
-                    Vector3 frictionDirection = velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity).normalized;
+                    Vector3 collisionPointVelocityDirection = (velocity + Vector3.Cross(ball.radius * Mathf.Cos(theta) * Vector3.up, angularVelocity)).normalized;
 
                     //compute the axis on which the torque acts
-                    Vector3 axisOfTorque = Vector3.Cross(Vector3.up, frictionDirection).normalized;
+                    Vector3 axisOfTorque = Vector3.Cross(Vector3.up, collisionPointVelocityDirection).normalized;
 
                     Vector3 angularAcceleration = ball.coefficientOfSlidingFriction * normalForce * ball.radius * axisOfTorque / ball.InertialMomentum;
 
