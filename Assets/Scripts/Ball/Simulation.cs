@@ -392,10 +392,13 @@ public class Simulation : MonoBehaviour
             
             private Vector3 CalculateMagnusForce(Vector3 velocity, Vector3 angularVelocity, BallState state)
             {
-                if(velocity.magnitude < 1e-3 || angularVelocity.magnitude < 1e-3 || state != BallState.Bouncing)
+                if(velocity.magnitude < 1e-3 || angularVelocity.magnitude < 1e-3)
                     return Vector3.zero;
                 
                 Vector3 magnusForce;
+
+                if (state == BallState.Rolling || state == BallState.Sliding)
+                    angularVelocity = new Vector3(0f, angularVelocity.y, 0f);
 
                 if (ball.useConstantCoefficients)
                 {
@@ -494,11 +497,12 @@ public class Simulation : MonoBehaviour
                 
                 float normalForce = (_gravitationalForce + _buoyantForce).magnitude;
                 
-                Vector3 frictionTorque = new Vector3(0, - ball.coefficientOfVerticalAxisSpinningDamping * Mathf.Sign(angularVelocity.y), 0);
+                Vector3 frictionTorque = Vector3.zero;
                 
                 //if the ball is rolling, the contact point is not moving with respect to the ground, therefore the is no other friction component acting on the ball
                 if (state == BallState.Rolling)
                 {
+                    frictionTorque += new Vector3(0, - ball.coefficientOfVerticalAxisSpinningDamping * Mathf.Sign(angularVelocity.y), 0);
                     frictionTorque += Vector3.Cross(acceleration / ball.radius, Vector3.down) * ball.InertialMomentum;
                 }
                 else
